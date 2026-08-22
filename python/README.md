@@ -1,0 +1,188 @@
+# supertuxkart-gym
+
+SuperTuxKart as a [Gymnasium](https://gymnasium.farama.org/) environment. The
+physics are the game's own: `supertuxkart --gym` runs as a child process and is
+driven one step at a time over a line-based JSON protocol.
+
+This page is the reference. For a walk-through aimed at someone who has not used
+Gymnasium before, read [`../README-AI.md`](../README-AI.md).
+
+```python
+import gymnasium, stk_gym
+
+env = gymnasium.make("SuperTuxKart-Easy-v0")
+obs, info = env.reset(seed=0)
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+env.close()
+```
+
+## Install
+
+The game must be built first; this package will not build it for you, because a
+SuperTuxKart build takes minutes.
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+pip install -e python
+```
+
+The binary is looked for in this order: an explicit `binary=` argument,
+`$STK_ENV_BIN`, `build/bin/supertuxkart` in the checkout this package lives in,
+and finally the `PATH`. The checkout comes before the `PATH` on purpose: a
+system-wide SuperTuxKart is almost certainly a release without `--gym`.
+
+## Registered ids
+
+| id | karts | laps | observation | step budget |
+|---|---|---|---|---|
+| `SuperTuxKart-v0` | game default | game default | `vector` | 3000 |
+| `SuperTuxKart-Easy-v0` | 1 | 1 | `vector` | 3000 |
+| `SuperTuxKart-Race-v0` | 4 | 3 | `vector_karts` | 6000 |
+
+`StkEnv` takes the same arguments directly: `track`, `laps`, `num_karts`,
+`difficulty`, `obs_mode`, `action_mode`, `reward_scheme`, `frame_skip`,
+`lookahead`, `expert`, `render_mode`, `binary`, `cwd`, `capture_stderr`.
+
+## Observations — `obs_mode`
+
+Both modes are a flat `Box(-inf, inf, (n,), float32)` whose length comes from
+the handshake, never from a constant repeated in Python.
+
+| mode | contents | length with the defaults |
+|---|---|---|
+| `vector` | 10 scalars about the kart, then `lookahead_k` driveline points as (x, z) in kart-local coordinates | 20 |
+| `vector_karts` | the above plus 4 numbers per opponent, nearest first | 20 + 4·(karts−1) |
+
+The ten scalars are: speed ÷ 30, speed ÷ current max speed, steering, on-road,
+on-ground, wrong-way, `tanh(distance to centre ÷ 5)`, nitro ÷ 100, rank
+normalised to [0, 1], and distance along the lap ÷ track length.
+
+The bounds are infinite deliberately. Every value is scaled to roughly [−1, 1],
+but a kart launched off a ramp can leave that range briefly and clipping the
+observation would hide it from the agent. Gymnasium's checker warns about this;
+the warning is expected.
+
+## Actions — `action_mode`
+
+| mode | space | meaning |
+|---|---|---|
+| `discrete` | `Discrete(15)` | 5 steering positions × {accelerate, coast, brake} |
+| `continuous` (default) | `Box([-1,0,0], [1,1,1])` | steer, accelerate, brake |
+| `continuous_full` | `Box(·, (5,))` | the above plus nitro and skid, thresholded at 0.5 |
+
+The server always accepts the whole control surface — steer, accel, brake,
+nitro, skid, fire, rescue — and `stk_gym.actions` decides which subset the agent
+gets. Adding an action space is a Python edit.
+
+## Rewards — `reward_scheme`
+
+Progress is `finished_laps × track_length + distance_down_track`, in metres.
+It runs smoothly through the start line, where `distance_down_track` wraps to
+zero and `finished_laps` steps from −1 to 0.
+
+| scheme | per step |
+|---|---|
+| `progress` (default) | Δ metres − 0.05 − 0.5 if off-road, +50 on finishing |
+| `progress_only` | Δ metres |
+| `sparse` | 50 on finishing, otherwise 0 |
+
+A step covering more than half a lap is paid nothing: that is a rescue or a lap
+counter crossing, not driving, and paying for it would teach the agent to
+trigger it.
+
+**Do not build a reward on `overall_distance`.** It is the game's own measure and
+is computed from the *checkline-validated* distance, which only moves when a
+checkline is crossed — it exists to defeat shortcuts, not to reward progress, and
+is flat in between. `info["progress_m"]` and `stk_gym.progress_of` use the right
+one.
+
+`info` carries `is_success`, `progress_m`, `lap`, `rank`, `speed`, `on_road`,
+`wrong_way` and `race_time`.
+
+## Episodes
+
+`step` never returns `truncated=True`: a time limit is `TimeLimit`'s decision,
+which `gymnasium.make` applies from the id's `max_episode_steps`. `terminated`
+means the kart crossed the finish line.
+
+`reset` restarts the race in place and costs well under a millisecond.
+Constructing an environment loads a track and costs about half a second, so keep
+environments and reset them.
+
+**The track is fixed for the life of an environment.** Reloading one costs
+seconds, so `reset(options={"track": ...})` is refused by name rather than
+silently ignored; race a different track with a different environment.
+
+## Several races at once
+
+```python
+venv = stk_gym.StkVectorEnv(num_envs=8, track="hacienda")
+```
+
+`World`, `RaceManager` and the physics world are process globals in the game, so
+this runs one child process per environment rather than one process with several
+sessions. A step posts its request to every child before reading any reply, so
+the races simulate at the same time; the test suite asserts it is bit-identical
+to `SyncVectorEnv` step for step.
+
+For Stable-Baselines3, `stk_gym.sb3.make_sb3_vec_env(num_envs=8, ...)` wraps it
+and reconciles the two places the conventions differ: autoreset timing, and
+`terminated`/`truncated` versus `done` + `TimeLimit.truncated`.
+
+## Watching a policy drive
+
+```python
+env = stk_gym.StkEnv(render_mode="human")
+```
+
+There is no second binary: the game decides at run time whether it has a window,
+so this simply leaves `--no-graphics` off. `render()` returns `None` because the
+game's own window does the drawing. `render_mode="ansi"` returns a status line
+instead.
+
+## Reproducibility
+
+A run reproduces exactly: the same seed and the same actions from process start
+give the same trajectory, bit for bit, in a different process on the same
+machine.
+
+Individual episodes *within* a run are not bit-identical to each other. A
+restart does not restore the physics world completely, and how much the world
+ran before the restart is what decides the difference: measured on `hacienda`,
+two episodes with the same seed and actions start about 0.7 mm apart and drift
+to about 2 cm over 300 steps. Episodes preceded by identical histories are
+identical.
+
+Note also that the seed does very little here. The grid, the track and the AI
+are fixed; seeding only affects the game's random draws, such as what an item box
+contains. Expect much less episode-to-episode variety than in a procedurally
+generated environment.
+
+## Talking to the game yourself
+
+The protocol is meant to be driveable by hand:
+
+```sh
+printf '{"id":1,"cmd":"hello"}\n{"id":2,"cmd":"reset","seed":1}\n{"id":3,"cmd":"step","action":{"steer":0,"accel":1}}\n' \
+  | ./build/bin/supertuxkart --gym --no-graphics -t hacienda 2>/dev/null
+```
+
+One JSON object per line in each direction, paired by `id`. Commands are
+`hello`, `reset`, `step`, `state`, `close`, plus `reset_batch` and `step_batch`
+for a batch of one. Failures answer `{"ok":false,"kind":"...","error":"..."}`
+with `kind` one of `bad_json`, `unknown_cmd`, `no_such_env`, `bad_action`,
+`not_reset`, `bad_batch`, `not_supported`.
+
+The server reports facts and never a reward: the reward scheme, the termination
+rule and the observation encoding all live here in Python, so changing any of
+them costs an edit rather than a rebuild of the game.
+
+## Tests
+
+```sh
+pip install -e "python[dev]"
+pytest python/tests -q
+```
+
+Every test that is not a pure function starts a real race, so the suite needs the
+built binary; without one it skips.

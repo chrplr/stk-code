@@ -93,3 +93,7 @@ lib/astc-encoder
 lib/shaderc
 
 .DS_Store
+
+# Python package build and cache artefacts
+python/**/__pycache__/
+python/**/*.egg-info/

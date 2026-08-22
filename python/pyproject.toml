@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "supertuxkart-gym"
+version = "0.1.0"
+description = "SuperTuxKart as a Gymnasium environment, driving the real game over a JSON-lines protocol"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Christophe Pallier", email = "christophe@pallier.org" }]
+keywords = ["gymnasium", "reinforcement-learning", "supertuxkart", "racing", "games"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["gymnasium>=1.0", "numpy>=1.21"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
+rl = ["stable-baselines3>=2.3"]
+
+[project.urls]
+Homepage = "https://supertuxkart.net"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stk_gym"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# No test should ever hang: the failure mode this package is most exposed to is
+# a blocked pipe, which without a timeout looks like a test that never finishes.
+# The budget is generous because every test starts a real race, and loading a
+# track takes about half a second.
+timeout = 300
