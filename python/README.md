@@ -164,8 +164,12 @@ The protocol is meant to be driveable by hand:
 
 ```sh
 printf '{"id":1,"cmd":"hello"}\n{"id":2,"cmd":"reset","seed":1}\n{"id":3,"cmd":"step","action":{"steer":0,"accel":1}}\n' \
-  | ./build/bin/supertuxkart --gym --no-graphics -t hacienda 2>/dev/null
+  | ./build/bin/supertuxkart --gym --no-graphics --track=hacienda 2>/dev/null
 ```
+
+SuperTuxKart's command line requires the `=`: `--track hacienda` with a space is
+parsed as two unrecognised arguments and the default track is started instead.
+`server_args` always emits `--track=...`.
 
 One JSON object per line in each direction, paired by `id`. Commands are
 `hello`, `reset`, `step`, `state`, `close`, plus `reset_batch` and `step_batch`

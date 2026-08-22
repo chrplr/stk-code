@@ -232,8 +232,13 @@ The protocol is plain text and meant to be typed:
 
 ```sh
 printf '{"id":1,"cmd":"hello"}\n{"id":2,"cmd":"reset","seed":1}\n{"id":3,"cmd":"step","action":{"steer":0,"accel":1}}\n{"id":4,"cmd":"close"}\n' \
-  | ./build/bin/supertuxkart --gym --no-graphics -t hacienda 2>/dev/null
+  | ./build/bin/supertuxkart --gym --no-graphics --track=hacienda 2>/dev/null
 ```
+
+Note the `=`. SuperTuxKart's own command line requires it: `--track hacienda`
+with a space is parsed as two unrecognised arguments and the game quietly starts
+its default track instead. (`stk_gym` always passes `--track=...`, so this only
+bites when driving the binary by hand.)
 
 One JSON object per line in each direction, paired by `id`. `hello` describes
 the race and every dimension the client needs, so Python never hard-codes a

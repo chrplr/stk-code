@@ -29,6 +29,14 @@ The software is released under the GNU General Public License (GPL) which can be
 
 Building instructions can be found in [`INSTALL.md`](/INSTALL.md)
 
+## Letting an AI drive
+
+`supertuxkart --gym` turns the game into a reinforcement learning environment: a
+program in another process supplies the steering and reads back what the kart
+can see, over a line-based JSON protocol. [`README-AI.md`](/README-AI.md) is a
+walk-through, and [`python/`](/python) is the Gymnasium package that goes with
+it.
+
 ## Contributing code
 
 **To contribute code to the official STK repository, please review the ['How to contribute code'](https://supertuxkart.net/How_to_contribute_code) guide.** It contains important guidelines to make the process smoother and maximize the chances that your contribution is accepted.
