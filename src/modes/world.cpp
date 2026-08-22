@@ -28,6 +28,7 @@
 #include "graphics/camera/camera_normal.hpp"
 #include "graphics/central_settings.hpp"
 #include "graphics/irr_driver.hpp"
+#include "gym/gym_server.hpp"
 #include "graphics/material.hpp"
 #include "graphics/material_manager.hpp"
 #include <ge_render_info.hpp>
@@ -509,6 +510,15 @@ std::shared_ptr<AbstractKart> World::createKart
     {
     case RaceManager::KT_PLAYER:
     {
+        if (GymServer::isEnabled())
+        {
+            // An external agent drives the player's kart. All the gym specific
+            // knowledge lives in src/gym, so this branch only asks for a
+            // controller and does not care which one it gets.
+            controller = GymServer::createPlayerController(new_kart.get());
+            m_num_players++;
+            break;
+        }
         int local_player_count = 99999;
         if (NetworkConfig::get()->isNetworking() &&
             NetworkConfig::get()->isClient())

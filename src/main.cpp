@@ -223,6 +223,7 @@ extern "C" {
 #include "graphics/sp/sp_base.hpp"
 #include "graphics/sp/sp_shader.hpp"
 #include "guiengine/engine.hpp"
+#include "gym/gym_server.hpp"
 #include "guiengine/event_handler.hpp"
 #include "guiengine/dialog_queue.hpp"
 #include "guiengine/message_queue.hpp"
@@ -630,6 +631,15 @@ void cmdLineHelp()
     "       --easter=n         Toggle Easter ears mode. n=0 Use current date, n=1, Always enable,\n"
     "                          n=2, Always disable.\n"
     "       --no-graphics      Do not display the actual race.\n"
+    "       --gym              Drive the race from another process over a\n"
+    "                          line based JSON protocol on stdin/stdout.\n"
+    "                          Implies -N and skips the ready-set-go phase.\n"
+    "       --gym-frame-skip=n Physics ticks per agent step (default 6).\n"
+    "       --gym-lookahead=n  Driveline points ahead in the observation\n"
+    "                          (default 5).\n"
+    "       --gym-expert       Let STK's own racing AI drive the agent's\n"
+    "                          kart, as a reference policy.\n"
+    "       --gym-no-karts     Leave the other karts out of the observation.\n"
     "       --sp-shader-debug  Enables debug in sp shader, it will print all unavailable uniforms.\n"
     "       --demo-mode=t      Enables demo mode after t seconds of idle time in "
                                "main menu.\n"
@@ -842,6 +852,12 @@ int handleCmdLineOutputModifier()
     }
     if(CommandLine::has("--no-console-log"))
         Log::toggleConsoleLog(false);
+
+    // Handled here, in the very first pass over the command line, because
+    // enable() moves the protocol off stdout and nothing must have printed
+    // there yet.
+    if (CommandLine::has("--gym"))
+        GymServer::enable();
 
     return 0;
 }
@@ -1141,6 +1157,26 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
         AIBaseController::enableDebug();
     if(CommandLine::has("--test-ai", &n))
         AIBaseController::setTestAI(n);
+    if (CommandLine::has("--gym-frame-skip", &n))
+    {
+        if (n < 1)
+        {
+            Log::fatal("main", "--gym-frame-skip must be at least 1.");
+        }
+        GymServer::setFrameSkip(n);
+    }
+    if (CommandLine::has("--gym-lookahead", &n))
+    {
+        if (n < 0)
+        {
+            Log::fatal("main", "--gym-lookahead cannot be negative.");
+        }
+        GymServer::setLookahead(n);
+    }
+    if (CommandLine::has("--gym-expert"))
+        GymServer::setExpert(true);
+    if (CommandLine::has("--gym-no-karts"))
+        GymServer::setIncludeKarts(false);
     if (CommandLine::has("--fps-debug"))
         UserConfigParams::m_fps_debug = true;
     if (CommandLine::has("--rewind") )
@@ -2656,7 +2692,17 @@ int main(int argc, char *argv[])
         appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
 #endif
 
-        main_loop->run();
+        if (GymServer::isEnabled())
+        {
+            // The gym server drives the same per tick sequence as MainLoop,
+            // but paced by an external agent rather than by the wall clock.
+            GymServer server;
+            server.run();
+        }
+        else
+        {
+            main_loop->run();
+        }
 
     }  // try
     catch (std::exception &e)

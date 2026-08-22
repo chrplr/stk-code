@@ -66,6 +66,11 @@ public:
          MainLoop(unsigned parent_pid, bool download_assets = false);
         ~MainLoop();
     void run();
+    /** Advances the game by one physics tick; the body of run()'s fixed
+     *  timestep loop, exposed so that the gym server can step the same
+     *  sequence from outside. Returns false when the caller should stop
+     *  stepping for this frame. */
+    bool updateSingleTick(bool fast_forward, double *left_over_time);
     /** Set the abort flag, causing the mainloop to be left. */
     void abort() { m_abort = true; }
     void requestAbort() { m_request_abort = true; }

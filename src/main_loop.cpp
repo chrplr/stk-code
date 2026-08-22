@@ -329,6 +329,71 @@ void MainLoop::updateRace(int ticks, bool fast_forward)
 }   // updateRace
 
 //-----------------------------------------------------------------------------
+/** Advances the game by exactly one physics tick.
+ *
+ *  This is the body of the fixed timestep loop in run(), extracted so that the
+ *  gym server can drive the same sequence one tick at a time without a second
+ *  copy of it to keep in step.
+ *
+ *  \param fast_forward If true, then only rewinders in network will be updated,
+ *         but not the physics.
+ *  \param left_over_time The leftover time of the caller's frame, reset to 0
+ *         when a cutscene reloads the world. May be NULL for a caller that
+ *         keeps no wall clock, such as the gym server.
+ *  \return False if the caller should stop stepping for this frame.
+ */
+bool MainLoop::updateSingleTick(bool fast_forward, double *left_over_time)
+{
+    if (World::getWorld() && history->replayHistory())
+    {
+        history->updateReplay(World::getWorld()->getTicksSinceStart());
+    }
+
+    PROFILER_PUSH_CPU_MARKER("Protocol manager update", 0x7F, 0x00, 0x7F);
+    if (auto pm = ProtocolManager::lock())
+    {
+        pm->update(1);
+    }
+    PROFILER_POP_CPU_MARKER();
+
+    PROFILER_PUSH_CPU_MARKER("Update race", 0, 255, 255);
+    if (World::getWorld())
+    {
+        updateRace(1, fast_forward);
+    }
+    PROFILER_POP_CPU_MARKER();
+
+    // We need to check again because update_race may have requested
+    // the main loop to abort; and it's not a good idea to continue
+    // since the GUI engine is no more to be called then.
+    if (m_abort || m_request_abort)
+        return false;
+
+    if (m_frame_before_loading_world)
+    {
+        // This will be called when changing introcutscene 1 and 2
+        // in CutsceneWorld::enterRaceOverState
+        // Reset the timer for correct time for cutscene
+        m_frame_before_loading_world = false;
+        m_curr_time = std::chrono::steady_clock::now();
+        if (left_over_time) *left_over_time = 0.0;
+        return false;
+    }
+
+    if (World::getWorld())
+    {
+        if (World::getWorld()->getPhase() == WorldStatus::SETUP_PHASE)
+        {
+            // Skip the large num steps contributed by loading time
+            World::getWorld()->updateTime(1);
+            return false;
+        }
+        World::getWorld()->updateTime(1);
+    }
+    return true;
+}   // updateSingleTick
+
+//-----------------------------------------------------------------------------
 /** Run the actual main loop.
  *  The sequence in which various parts of STK are updated is:
  *  - Determine next time step size (`getLimitedDt`). This takes maximum fps
@@ -625,54 +690,8 @@ void MainLoop::run()
                 num_steps > stk_config->time2Ticks(1.0f);
             for (int i = 0; i < num_steps; i++)
             {
-                if (World::getWorld() && history->replayHistory())
-                {
-                    history->updateReplay(
-                                       World::getWorld()->getTicksSinceStart());
-                }
-
-                PROFILER_PUSH_CPU_MARKER("Protocol manager update",
-                                         0x7F, 0x00, 0x7F);
-                if (auto pm = ProtocolManager::lock())
-                {
-                    pm->update(1);
-                }
-                PROFILER_POP_CPU_MARKER();
-
-                PROFILER_PUSH_CPU_MARKER("Update race", 0, 255, 255);
-                if (World::getWorld())
-                {
-                    updateRace(1, fast_forward);
-                }
-                PROFILER_POP_CPU_MARKER();
-
-                // We need to check again because update_race may have requested
-                // the main loop to abort; and it's not a good idea to continue
-                // since the GUI engine is no more to be called then.
-                if (m_abort || m_request_abort)
+                if (!updateSingleTick(fast_forward, &left_over_time))
                     break;
-
-                if (m_frame_before_loading_world)
-                {
-                    // This will be called when changing introcutscene 1 and 2
-                    // in CutsceneWorld::enterRaceOverState
-                    // Reset the timer for correct time for cutscene
-                    m_frame_before_loading_world = false;
-                    m_curr_time = std::chrono::steady_clock::now();
-                    left_over_time = 0.0;
-                    break;
-                }
-
-                if (World::getWorld())
-                {
-                    if (World::getWorld()->getPhase()==WorldStatus::SETUP_PHASE)
-                    {
-                        // Skip the large num steps contributed by loading time
-                        World::getWorld()->updateTime(1);
-                        break;
-                    }
-                    World::getWorld()->updateTime(1);
-                }
             }   // for i < num_steps
 
             // Do it after all pending rewinding is done
