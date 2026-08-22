@@ -45,9 +45,15 @@ def compute_reward(
     if scheme not in REWARD_SCHEMES:
         raise ValueError(f"unknown reward_scheme {scheme!r}; choose from {REWARD_SCHEMES}")
 
-    finished = bool(after.get("finished", False))
+    # The bonus is paid on the crossing, not for having crossed. An agent that
+    # honours `terminated` never sees the difference, but one that keeps
+    # stepping - a wrapper that ignores it, a hand-written loop - would
+    # otherwise sit past the line collecting the bonus once per step.
+    just_finished = bool(after.get("finished", False)) and not bool(
+        before.get("finished", False)
+    )
     if scheme == "sparse":
-        return _FINISH_BONUS if finished else 0.0
+        return _FINISH_BONUS if just_finished else 0.0
 
     delta = _obs.progress_of(after, track_length) - _obs.progress_of(
         before, track_length
@@ -66,7 +72,7 @@ def compute_reward(
     reward = delta - _TIME_PENALTY
     if not after.get("on_road", True):
         reward -= _OFF_ROAD_PENALTY
-    if finished:
+    if just_finished:
         reward += _FINISH_BONUS
     return float(reward)
 

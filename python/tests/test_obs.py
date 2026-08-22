@@ -99,6 +99,17 @@ def test_finishing_is_worth_more_than_a_step_of_driving():
     assert done > plain + 10.0
 
 
+def test_the_finish_bonus_is_paid_once_and_not_once_per_step():
+    """An agent that ignores `terminated` must not be able to sit past the line
+    collecting the bonus."""
+    crossing = compute_reward(a_state(), a_state(finished=True),
+                              scheme="sparse", track_length=LAP)
+    after = compute_reward(a_state(finished=True), a_state(finished=True),
+                           scheme="sparse", track_length=LAP)
+    assert crossing > 0.0
+    assert after == 0.0
+
+
 def test_sparse_pays_only_at_the_finish():
     assert compute_reward(a_state(), a_state(distance_down_track=200.0),
                           scheme="sparse", track_length=LAP) == 0.0
