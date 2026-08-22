@@ -153,10 +153,16 @@ two episodes with the same seed and actions start about 0.7 mm apart and drift
 to about 2 cm over 300 steps. Episodes preceded by identical histories are
 identical.
 
-Note also that the seed does very little here. The grid, the track and the AI
-are fixed; seeding only affects the game's random draws, such as what an item box
-contains. Expect much less episode-to-episode variety than in a procedurally
-generated environment.
+The seed does less here than in a procedurally generated environment, but it is
+not inert. The grid, the track and the driveline are fixed, so a policy that
+only steers sees essentially no variation - a trained policy measured over six
+seeds lapped in 80.3 s every time. Seeding changes the game's random draws, so
+anything that picks things up does vary: the built-in AI, over the same six
+seeds, lapped `hacienda` in 89.7 to 95.5 s.
+
+Within a single process, successive episodes with the same seed give the same
+lap time to a tenth of a second; the sub-millimetre drift above is not enough to
+change the outcome.
 
 ## Talking to the game yourself
 

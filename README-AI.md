@@ -122,6 +122,9 @@ driven by the same environment. It is the ceiling. A learned policy that does
 not beat `straight` has learned nothing; one that approaches `expert` has
 learned to drive.
 
+The expert's lap time moves by a few seconds from run to run — it uses items and
+nitro, and those draws depend on the seed. The other two rows do not move.
+
 This script is also a wiring check. If the expert ever stops finishing, or a
 straight line stops crashing, the observation or the action mapping has broken in
 a way the unit tests cannot see.
@@ -155,21 +158,23 @@ pip install -e "python[rl]"
 python python/examples/train_ppo.py --steps 500000 --envs 8 --save kart.zip
 ```
 
-Measured on the same machine, `hacienda`, one kart, one lap, an 8-way vector
-environment, 500,000 steps in **2.0 minutes** (4,100 steps/s end to end):
+Measured on the same machine, `hacienda`, one kart, one lap, Beginner, an 8-way
+vector environment: 500,000 steps in **2.0 minutes** (4,100 steps/s end to end).
+Evaluating the result over six episodes, each in a fresh process:
 
-```
-policy                  progress m  finished   race s  off-road    reward
--------------------------------------------------------------------------
-straight                     138.5        0%    100.0       96%    -900.6
-ppo (500k steps)            1167.0      100%     80.4        0%    1135.4
-expert (SkiddingAI)         1167.0      100%     90.3        0%    1121.6
-```
-(five evaluation episodes each, 2000-step budget — which is why `straight`
-scores −900 here and −1450 in §6, where the budget was 3000.)
+| policy | finishes | lap time | 
+|---|---|---|
+| straight | 0 / 6 | — (139 m of 1167) |
+| ppo, 500k steps | 6 / 6 | 80.3 s (identical every episode) |
+| expert (SkiddingAI, Beginner) | 6 / 6 | 92.6 s mean, 89.7–95.5 s |
 
 So half a lap of untrained flailing becomes a policy that completes every lap
-and, on this track, laps ten seconds faster than the game's own AI.
+and, on this track and at this difficulty, laps about twelve seconds faster than
+the game's own AI.
+
+The trained policy is exactly repeatable because it is deterministic and never
+picks anything up. The reference AI is not: it uses items and nitro, and those
+draws depend on the seed, which is why its lap time is quoted as a range.
 
 Training runs eight races at once, one process each. The game is not the
 bottleneck — a single environment does about 8,500 steps per second, and an
@@ -184,9 +189,10 @@ track and the same lap, SkiddingAI laps in:
 
 | difficulty | 0 Beginner | 1 Intermediate | 2 Expert | 3 SuperTux |
 |---|---|---|---|---|
-| lap time | 90.3 s | 58.5 s | 49.5 s | 45.2 s |
+| lap time (mean of 6) | 92.6 s | 58.5 s | 50.3 s | 44.2 s |
+| range | 89.7–95.5 | 58.5–58.5 | 49.2–51.3 | 43.8–45.8 |
 
-The trained policy's 80.4 s beats Beginner and is nowhere near SuperTux. Train
+The trained policy's 80.3 s beats Beginner and is nowhere near SuperTux. Train
 with `--difficulty` set to the level you want to be compared against, and quote
 the level alongside any lap time — otherwise two runs are not comparable.
 
@@ -259,9 +265,11 @@ descriptor 1 at stderr. That is why `2>/dev/null` above is safe.
 
 - **A straight line crashes after 139 metres.** Yes. See §5.
 - **Different seeds give nearly identical episodes.** The grid, the track and
-  the AI are all fixed; the seed only affects the game's random draws, such as
-  what an item box contains. There is much less variety here than in a
-  procedurally generated environment.
+  the driveline are fixed, so the seed only changes the game's random draws,
+  such as what an item box contains. A policy that just steers sees no variation
+  at all; the built-in AI, which uses items, varies by a few seconds a lap.
+  Either way there is much less variety here than in a procedurally generated
+  environment.
 - **Two episodes in the same process are not bit-identical.** Restarting a race
   does not restore the physics world completely. Measured on `hacienda`, two
   episodes with the same seed and the same actions start about 0.7 mm apart and
