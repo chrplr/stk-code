@@ -232,6 +232,16 @@ the game ignores it and SkiddingAI drives.
 Rendering runs at the display's refresh rate, so a race plays at roughly three
 times real time rather than at 8,500 steps per second.
 
+## 9b. Let a person drive, and watch from Python
+
+`--gym-human` (or `stk_gym.HumanSession`) is the reverse of everything above:
+the game runs as usual — its window, its keyboard and gamepad, its own clock —
+and the protocol only reports, once per frame: `state` (which now includes a
+`controls` object, the record of what the person did) and `reset`. `step` is
+refused. An experiment harness that presents the game to a participant and
+samples the trajectory at its own rate needs exactly this and nothing more;
+see `python/README.md`, "A person at the wheel".
+
 ## 10. Talk to the game yourself
 
 The protocol is plain text and meant to be typed:

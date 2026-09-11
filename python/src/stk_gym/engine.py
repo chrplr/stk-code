@@ -261,6 +261,11 @@ def server_args(
     expert: bool = False,
     include_karts: bool = True,
     render: bool = False,
+    human: bool = False,
+    fullscreen: bool = False,
+    screensize: str | None = None,
+    race_now: bool = False,
+    extra: Iterable[str] = (),
 ) -> list[str]:
     """Build the command line for :class:`Engine` from environment options.
 
@@ -269,10 +274,13 @@ def server_args(
 
     Rendering is a flag rather than a separate binary: the game already decides
     at run time whether it has a window, so watching a policy play means leaving
-    ``--no-graphics`` off.
+    ``--no-graphics`` off. ``human`` puts a person at the wheel (``--gym-human``:
+    the game keeps its own clock and input, the protocol only reports) and
+    implies a window; ``fullscreen``, ``screensize`` and ``race_now`` (skip the
+    countdown) are the game's own flags, and ``extra`` passes any others.
     """
-    args: list[str] = ["--gym"]
-    if not render:
+    args: list[str] = ["--gym-human" if human else "--gym"]
+    if not render and not human:
         args.append("--no-graphics")
     for flag, value in (
         ("--track", track),
@@ -288,4 +296,11 @@ def server_args(
         args.append("--gym-expert")
     if not include_karts:
         args.append("--gym-no-karts")
+    if fullscreen:
+        args.append("--fullscreen")
+    if screensize:
+        args.append(f"--screensize={screensize}")
+    if race_now:
+        args.append("--race-now")
+    args.extend(extra)
     return args

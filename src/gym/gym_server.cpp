@@ -27,6 +27,7 @@
 #include "gym/gym_json.hpp"
 #include "gym/gym_state.hpp"
 #include "karts/abstract_kart.hpp"
+#include "karts/controller/local_player_controller.hpp"
 #include "main_loop.hpp"
 #include "modes/linear_world.hpp"
 #include "modes/world.hpp"
@@ -43,10 +44,12 @@
 
 #ifdef WIN32
 #  include <io.h>
+#  include <windows.h>
 #  define STK_DUP  _dup
 #  define STK_DUP2 _dup2
 #  define STK_FDOPEN _fdopen
 #else
+#  include <poll.h>
 #  include <unistd.h>
 #  define STK_DUP  dup
 #  define STK_DUP2 dup2
@@ -54,6 +57,7 @@
 #endif
 
 bool  GymServer::m_enabled       = false;
+bool  GymServer::m_human         = false;
 bool  GymServer::m_expert        = false;
 int   GymServer::m_frame_skip    = 6;
 int   GymServer::m_lookahead_k   = 5;
@@ -76,10 +80,29 @@ static const char *ERR_NOT_SUPPORTED= "not_supported";
 //-----------------------------------------------------------------------------
 GymServer::GymServer()
 {
-    m_kart_id   = 0;
-    m_has_reset = false;
-    m_quit      = false;
+    m_kart_id    = 0;
+    m_has_reset  = false;
+    m_quit       = false;
+    m_kart_found = false;
 }   // GymServer
+
+//-----------------------------------------------------------------------------
+/** Human mode implies gym mode. The race keeps its ready-set-go countdown - it
+ *  is part of what the person experiences - unless -R is given, which STK's
+ *  own command line parsing applies after this. */
+void GymServer::setHuman(bool h)
+{
+    if (h) enable();
+    m_human = h;
+    if (h) UserConfigParams::m_race_now = false;
+}   // setHuman
+
+//-----------------------------------------------------------------------------
+GymServer* GymServer::human()
+{
+    static GymServer server;
+    return &server;
+}   // human
 
 //-----------------------------------------------------------------------------
 /** Claims the real stdout for the protocol and points file descriptor 1 at
@@ -123,6 +146,14 @@ void GymServer::enable()
 //-----------------------------------------------------------------------------
 Controller* GymServer::createPlayerController(AbstractKart *kart)
 {
+    if (m_human)
+    {
+        // The seat is a person's: STK's own controller, reading the keyboard
+        // or gamepad that -N assigned to the active player, with the camera
+        // and sound a local player gets. The server only watches.
+        return new LocalPlayerController(kart, 0/*local_player_id*/,
+                                         HANDICAP_NONE);
+    }
     if (m_expert)
     {
         // The reference policy: STK's own racing AI in the agent's seat, so
@@ -182,6 +213,77 @@ void GymServer::run()
         fflush(m_protocol_out);
     }
 }   // run
+
+//-----------------------------------------------------------------------------
+/** Reads whatever stdin holds right now and answers each complete line.
+ *
+ *  Runs on the game's thread, between two frames, so World is safe to read
+ *  and a request costs at most one frame of latency. Stdin at end of file is
+ *  the parent process gone (or done), and the loop is asked to stop exactly
+ *  as run() would return. */
+void GymServer::pollOnce()
+{
+    if (m_quit) return;
+    if (!m_kart_found && World::getWorld())
+    {
+        findKart();
+        m_kart_found = true;
+    }
+
+    char buffer[4096];
+    for (;;)
+    {
+#ifdef WIN32
+        HANDLE in = (HANDLE)_get_osfhandle(0);
+        DWORD available = 0;
+        if (!PeekNamedPipe(in, NULL, 0, NULL, &available, NULL))
+        {
+            // Not a pipe (a console, say): fall back to a blocking read only
+            // when the handle signals data, else give up polling this frame.
+            if (WaitForSingleObject(in, 0) != WAIT_OBJECT_0) break;
+            available = 1;
+        }
+        if (available == 0) break;
+        const int n = _read(0, buffer, sizeof(buffer));
+#else
+        struct pollfd pfd;
+        pfd.fd      = 0;
+        pfd.events  = POLLIN;
+        pfd.revents = 0;
+        const int ready = poll(&pfd, 1, 0/*timeout ms*/);
+        if (ready <= 0) break;
+        const ssize_t n = read(0, buffer, sizeof(buffer));
+#endif
+        if (n < 0) break;
+        if (n == 0)
+        {
+            // End of file: nobody will ever ask again.
+            m_quit = true;
+            if (main_loop) main_loop->requestAbort();
+            return;
+        }
+        m_pending.append(buffer, (size_t)n);
+        if ((size_t)n < sizeof(buffer)) break;
+    }
+
+    size_t start = 0;
+    for (;;)
+    {
+        const size_t nl = m_pending.find('\n', start);
+        if (nl == std::string::npos) break;
+        std::string line = m_pending.substr(start, nl - start);
+        start = nl + 1;
+        if (!line.empty() && line[line.size() - 1] == '\r')
+            line.erase(line.size() - 1);
+        if (line.empty()) continue;
+        const std::string response = handle(line);
+        fputs(response.c_str(), m_protocol_out);
+        fputc('\n', m_protocol_out);
+        fflush(m_protocol_out);
+        if (m_quit) break;
+    }
+    m_pending.erase(0, start);
+}   // pollOnce
 
 //-----------------------------------------------------------------------------
 std::string GymServer::error(int id, const char *kind,
@@ -288,6 +390,14 @@ void GymServer::applyAction(const GymJson::Value &action)
  */
 void GymServer::resetRace()
 {
+    if (m_human)
+    {
+        // The live loop runs the countdown and refreshes the track sectors
+        // on its next update; nothing is stepped here. m_race_now is left as
+        // the command line set it.
+        RaceManager::get()->rerunRace();
+        return;
+    }
     // WorldStatus clears this once the race is under way, so it is set again
     // for every restart; without it each episode would pay a ready-set-go
     // countdown.
@@ -403,6 +513,7 @@ std::string GymServer::handle(const std::string &line)
         writer.addFloat ("track_length", GymState::getTrackLength());
         writer.addBool  ("render",       !GUIEngine::isNoGraphics());
         writer.addBool  ("expert",       m_expert);
+        writer.addBool  ("human",        m_human);
         writer.endObject();
         return writer.toString();
     }
@@ -448,6 +559,12 @@ std::string GymServer::handle(const std::string &line)
     // -- step ----------------------------------------------------------------
     if (cmd == "step" || cmd == "step_batch")
     {
+        if (m_human)
+        {
+            return error(id, ERR_NOT_SUPPORTED,
+                         "in --gym-human mode the race runs on its own clock; "
+                         "poll it with \"state\" instead of stepping it");
+        }
         if (!m_has_reset)
             return error(id, ERR_NOT_RESET, "reset must be called before step");
 
@@ -491,6 +608,7 @@ std::string GymServer::handle(const std::string &line)
     if (cmd == "close")
     {
         m_quit = true;
+        if (m_human && main_loop) main_loop->requestAbort();
         GymJson::Writer writer;
         writer.addInt ("id", id);
         writer.addBool("ok", true);

@@ -639,6 +639,10 @@ void cmdLineHelp()
     "                          (default 5).\n"
     "       --gym-expert       Let STK's own racing AI drive the agent's\n"
     "                          kart, as a reference policy.\n"
+    "       --gym-human        A person drives (keyboard/gamepad, as usual)\n"
+    "                          while the JSON protocol only reports the\n"
+    "                          race: state and reset, polled every frame.\n"
+    "                          Keeps the countdown unless -R is given.\n"
     "       --gym-no-karts     Leave the other karts out of the observation.\n"
     "       --sp-shader-debug  Enables debug in sp shader, it will print all unavailable uniforms.\n"
     "       --demo-mode=t      Enables demo mode after t seconds of idle time in "
@@ -858,6 +862,8 @@ int handleCmdLineOutputModifier()
     // there yet.
     if (CommandLine::has("--gym"))
         GymServer::enable();
+    if (CommandLine::has("--gym-human"))
+        GymServer::setHuman(true);
 
     return 0;
 }
@@ -2692,7 +2698,7 @@ int main(int argc, char *argv[])
         appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
 #endif
 
-        if (GymServer::isEnabled())
+        if (GymServer::isEnabled() && !GymServer::isHuman())
         {
             // The gym server drives the same per tick sequence as MainLoop,
             // but paced by an external agent rather than by the wall clock.
@@ -2701,6 +2707,8 @@ int main(int argc, char *argv[])
         }
         else
         {
+            // Including --gym-human: the game keeps its own clock and
+            // MainLoop polls the protocol once per frame.
             main_loop->run();
         }
 

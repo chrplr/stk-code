@@ -131,6 +131,20 @@ void writeFields(GymJson::Writer *writer, unsigned int kart_id,
     writer->addInt  ("skid",          controls ? (int)controls->getSkidControl()
                                                : 0);
     writer->addFloat("nitro_energy",  kart->getEnergy());
+    // What the controller is actually asking of the kart this tick. In agent
+    // mode that echoes the last action; with a person at the wheel
+    // (--gym-human) it is the only record of what they did.
+    writer->beginObject("controls");
+    writer->addFloat("steer",     controls ? controls->getSteer()     : 0.0f);
+    writer->addFloat("accel",     controls ? controls->getAccel()     : 0.0f);
+    writer->addBool ("brake",     controls ? controls->getBrake()     : false);
+    writer->addBool ("nitro",     controls ? controls->getNitro()     : false);
+    writer->addInt  ("skid",      controls ? (int)controls->getSkidControl()
+                                           : 0);
+    writer->addBool ("fire",      controls ? controls->getFire()      : false);
+    writer->addBool ("rescue",    controls ? controls->getRescue()    : false);
+    writer->addBool ("look_back", controls ? controls->getLookBack()  : false);
+    writer->endObject();
     writer->addBool ("on_ground",     kart->isOnGround());
     writer->addFloat("heading",       kart->getHeading());
     writer->addFloat("pitch",         kart->getPitch());

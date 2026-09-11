@@ -140,6 +140,27 @@ so this simply leaves `--no-graphics` off. `render()` returns `None` because the
 game's own window does the drawing. `render_mode="ansi"` returns a status line
 instead.
 
+## A person at the wheel
+
+```python
+session = stk_gym.HumanSession(track="hacienda", laps=3, num_karts=4, fullscreen=True)
+session.reset(seed=1)
+while not session.state()["finished"]:
+    ...                                   # sample at whatever rate you like
+session.close()
+```
+
+`--gym-human` turns the server round. The game opens its usual window, reads
+the keyboard or gamepad itself and runs on its own clock, with its frame pacing
+and sound; the protocol only *reports*. `state()` returns the race as of the
+game's next frame (so one frame of latency), including a `controls` object —
+`steer`, `accel`, `brake`, `nitro`, `skid`, `fire`, `rescue`, `look_back` —
+which is the record of what the person did; `reset()` restarts the race. There
+is no `step`: the game refuses it in this mode, so a caller cannot mistake a
+race that runs by itself for one it is driving. The ready-set-go countdown is
+kept unless `race_now=True`. This is the shape an experiment harness wants:
+present the game to a participant, sample the trajectory at its own rate.
+
 ## Reproducibility
 
 A run reproduces exactly: the same seed and the same actions from process start

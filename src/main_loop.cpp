@@ -32,6 +32,7 @@
 #include "graphics/sp/sp_texture_manager.hpp"
 #include "guiengine/engine.hpp"
 #include "guiengine/message_queue.hpp"
+#include "gym/gym_server.hpp"
 #include "guiengine/modaldialog.hpp"
 #include "guiengine/screen_keyboard.hpp"
 #include "input/input_manager.hpp"
@@ -484,6 +485,10 @@ void MainLoop::run()
 
     while (!m_abort)
     {
+        // A person is driving and another process is watching: answer its
+        // requests between frames, where World is safe to read.
+        if (GymServer::isHuman())
+            GymServer::human()->pollOnce();
 #ifdef __SWITCH__
       // This feeds us messages (like when the Switch sleeps or requests an exit)
       m_abort = !appletMainLoop();

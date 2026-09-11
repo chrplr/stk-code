@@ -30,6 +30,7 @@ from .engine import (
     server_args,
 )
 from .env import REWARD_SCHEMES, StkEnv, compute_reward, state_info
+from .human import HumanSession
 from .obs import OBS_MODES, progress_of
 from .vector_env import StkVectorEnv
 
@@ -38,6 +39,7 @@ __all__ = [
     "BinaryNotFound",
     "CommandFailed",
     "Engine",
+    "HumanSession",
     "EngineDied",
     "EngineError",
     "OBS_MODES",

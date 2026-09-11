@@ -45,11 +45,19 @@ namespace GymJson { class Value; }
  *  The track is fixed for the life of the process: loading one costs seconds,
  *  so reset restarts the race in place (RaceManager::rerunRace) and a different
  *  track means a different child.
+ *
+ *  --gym-human turns the server round: a person drives, through STK's own
+ *  input system, and the game keeps its own clock, frame pacing and sound
+ *  (MainLoop::run as usual). The protocol is then polled once per frame and
+ *  only reports - state, plus the controls the kart applied - and restarts
+ *  the race on reset. step is refused in this mode, so that a client cannot
+ *  mistake a race that runs on its own for one it is stepping.
  */
 class GymServer
 {
 private:
     static bool         m_enabled;
+    static bool         m_human;
     static bool         m_expert;
     static int          m_frame_skip;
     static int          m_lookahead_k;
@@ -66,6 +74,9 @@ private:
      *  error the client can recognise rather than an undefined observation. */
     bool                m_has_reset;
     bool                m_quit;
+    /** Bytes read from stdin in human mode that do not yet end a line. */
+    std::string         m_pending;
+    bool                m_kart_found;
 
     std::string  handle(const std::string &line);
     std::string  error(int id, const char *kind, const std::string &message);
@@ -88,6 +99,8 @@ public:
      *  chance to print. */
     static void  enable();
     static bool  isEnabled()            { return m_enabled;       }
+    static void  setHuman(bool h);
+    static bool  isHuman()              { return m_human;         }
     static void  setExpert(bool e)      { m_expert = e;           }
     static bool  isExpert()             { return m_expert;        }
     static void  setFrameSkip(int n)    { m_frame_skip = n;       }
@@ -101,6 +114,12 @@ public:
     /** Reads commands until stdin reaches end of file, which is how the process
      *  exits when its parent dies. Replaces MainLoop::run in gym mode. */
     void         run();
+    /** Human mode: answers whatever commands have arrived, without blocking.
+     *  Called by MainLoop::run once per frame. Stdin at end of file requests
+     *  the loop to stop, as run() does by returning. */
+    void         pollOnce();
+    /** The server MainLoop polls in human mode, created on first use. */
+    static GymServer* human();
 };   // class GymServer
 
 #endif
