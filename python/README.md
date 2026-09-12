@@ -155,7 +155,10 @@ the keyboard or gamepad itself and runs on its own clock, with its frame pacing
 and sound; the protocol only *reports*. `state()` returns the race as of the
 game's next frame (so one frame of latency), including a `controls` object —
 `steer`, `accel`, `brake`, `nitro`, `skid`, `fire`, `rescue`, `look_back` —
-which is the record of what the person did; `reset()` restarts the race. There
+which is the record of what the person did; `sample()` flattens that state to
+one row of floats (`SAMPLE_FIELDS`, always all of them, NaN where the game
+reported nothing), the shape a per-sample log wants; `reset()` restarts the
+race. There
 is no `step`: the game refuses it in this mode, so a caller cannot mistake a
 race that runs by itself for one it is driving. The ready-set-go countdown is
 kept unless `race_now=True`. This is the shape an experiment harness wants:

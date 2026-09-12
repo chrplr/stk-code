@@ -11,6 +11,7 @@ import time
 import pytest
 
 from stk_gym import CommandFailed, HumanSession, server_args
+from stk_gym.human import SAMPLE_FIELDS
 
 from conftest import FAST
 
@@ -61,3 +62,20 @@ def test_human_session_runs_on_its_own_clock(binary):
         # info is the same flat summary StkEnv gives.
         info = session.info()
         assert {"race_time", "speed", "lap", "progress_m"} <= info.keys()
+
+        # sample() is one row of floats with every field, every time.
+        row = session.sample()
+        assert tuple(row) == SAMPLE_FIELDS
+        assert all(isinstance(v, float) for v in row.values())
+        assert row["ctrl_brake"] in (0.0, 1.0) and row["tick"] == float(b["tick"])
+
+
+def test_sample_is_all_nan_without_a_race():
+    """A session whose state has no race (before reset, after a quit) still
+    yields the full row, so a log of rows never changes shape."""
+    session = HumanSession.__new__(HumanSession)
+    session._state = {}
+    session.track_length = 100.0
+    row = session.sample()
+    assert tuple(row) == SAMPLE_FIELDS
+    assert all(v != v for v in row.values()), "every field NaN"
