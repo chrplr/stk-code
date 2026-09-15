@@ -19,6 +19,7 @@
 #include "graphics/fixed_pipeline_renderer.hpp"
 #include "config/user_config.hpp"
 #include "graphics/camera/camera.hpp"
+#include "gym/gym_server.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/render_target.hpp"
 #include "modes/world.hpp"
@@ -113,6 +114,7 @@ void FixedPipelineRenderer::render(float dt, bool is_loading)
     drawDebugMeshes();
 #endif
 
+    GymServer::captureFrame();
     irr_driver->getVideoDriver()->endScene();
     
 }

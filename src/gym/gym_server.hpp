@@ -21,6 +21,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 class AbstractKart;
 class Controller;
@@ -52,6 +53,15 @@ namespace GymJson { class Value; }
  *  only reports - state, plus the controls the kart applied - and restarts
  *  the race on reset. step is refused in this mode, so that a client cannot
  *  mistake a race that runs on its own for one it is stepping.
+ *
+ *  A request may add "frame": true, and the response then describes the
+ *  rendered frame - {"width":W,"height":H,"format":"rgb8"} - and is followed,
+ *  after its newline, by W*H*3 raw bytes: rows top to bottom, RGB. Pixels do
+ *  not fit a line-based text format, and encoding them as text would cost more
+ *  than the render itself at the sizes a screen needs, so the one exception to
+ *  "one JSON object per line" is a binary block whose length the line before
+ *  it states. --gym-hidden keeps the window off the screen for the client
+ *  that shows the frames itself.
  */
 class GymServer
 {
@@ -62,6 +72,17 @@ private:
     static int          m_frame_skip;
     static int          m_lookahead_k;
     static bool         m_include_karts;
+    static bool         m_hidden;
+    static bool         m_keys;
+    /** Set for the duration of one render so that the renderer's hook,
+     *  which runs for every frame drawn, knows this is the one to keep. The
+     *  frame itself is static too: there is one server per process, and the
+     *  hook has no instance to reach. */
+    static bool         m_capture_wanted;
+    static std::vector<unsigned char> m_frame;
+    static unsigned int m_frame_width;
+    static unsigned int m_frame_height;
+    static bool         m_frame_ready;
 
     /** The real stdout, saved before file descriptor 1 is pointed at stderr.
      *  Everything STK, irrlicht or a bundled library prints then lands on
@@ -82,6 +103,9 @@ private:
     std::string  error(int id, const char *kind, const std::string &message);
     std::string  buildState(int id);
     std::string  buildStateBatch(int id);
+    bool         frameRefused(int id, std::string *response);
+    void         renderFrame();
+    void         writeResponse(const std::string &response);
     bool         checkEnvId(const GymJson::Value &request, int *id_out,
                             std::string *response);
     void         findKart();
@@ -90,6 +114,7 @@ private:
     void         advanceToRacePhase();
     void         stepTicks(int ticks);
     void         updateGraphics();
+    bool         wantsFrame(const GymJson::Value &request);
 
 public:
                  GymServer();
@@ -106,6 +131,15 @@ public:
     static void  setFrameSkip(int n)    { m_frame_skip = n;       }
     static void  setLookahead(int n)    { m_lookahead_k = n;      }
     static void  setIncludeKarts(bool b){ m_include_karts = b;    }
+    static void  setHidden(bool h)      { if (h) enable(); m_hidden = h; }
+    static bool  isHidden()             { return m_hidden;        }
+    static void  setKeys(bool k)        { m_keys = k;             }
+    static bool  isKeys()               { return m_keys;          }
+
+    /** Reads the frame back if a request asked for one. Called by the
+     *  renderers right before the buffers are swapped, which is the one point
+     *  where the back buffer holds a complete frame, HUD included. */
+    static void  captureFrame();
 
     /** Builds the controller for the kart in the player slot. Called from
      *  World::createKart so that all the gym specific knowledge stays here. */

@@ -18,6 +18,7 @@
 
 #include "gym/gym_server.hpp"
 
+#include "audio/sfx_manager.hpp"
 #include "config/stk_config.hpp"
 #include "config/user_config.hpp"
 #include "graphics/camera/camera.hpp"
@@ -26,6 +27,8 @@
 #include "gym/gym_controller.hpp"
 #include "gym/gym_json.hpp"
 #include "gym/gym_state.hpp"
+#include "items/item_manager.hpp"
+#include "items/powerup_manager.hpp"
 #include "karts/abstract_kart.hpp"
 #include "karts/controller/local_player_controller.hpp"
 #include "main_loop.hpp"
@@ -39,7 +42,9 @@
 #include <iostream>
 
 #ifndef SERVER_ONLY
+#  include <IImage.h>
 #  include <IrrlichtDevice.h>
+#  include <IVideoDriver.h>
 #endif
 
 #ifdef WIN32
@@ -62,6 +67,13 @@ bool  GymServer::m_expert        = false;
 int   GymServer::m_frame_skip    = 6;
 int   GymServer::m_lookahead_k   = 5;
 bool  GymServer::m_include_karts = true;
+bool  GymServer::m_hidden        = false;
+bool  GymServer::m_keys          = false;
+bool  GymServer::m_capture_wanted= false;
+std::vector<unsigned char> GymServer::m_frame;
+unsigned int GymServer::m_frame_width  = 0;
+unsigned int GymServer::m_frame_height = 0;
+bool  GymServer::m_frame_ready   = false;
 FILE *GymServer::m_protocol_out  = NULL;
 
 /** Bumped whenever the wire format changes in a way a client must notice. The
@@ -129,7 +141,9 @@ void GymServer::enable()
         exit(1);
     }
     STK_DUP2(2, 1);
-    m_protocol_out = STK_FDOPEN(saved, "w");
+    // Binary: a frame's pixels follow the response line, and on Windows a
+    // text stream would rewrite any 0x0a among them.
+    m_protocol_out = STK_FDOPEN(saved, "wb");
     if (m_protocol_out == NULL)
     {
         fprintf(stderr, "[gym] cannot reopen the saved stdout; refusing to "
@@ -153,6 +167,13 @@ Controller* GymServer::createPlayerController(AbstractKart *kart)
         // and sound a local player gets. The server only watches.
         return new LocalPlayerController(kart, 0/*local_player_id*/,
                                          HANDICAP_NONE);
+    }
+    if (m_keys)
+    {
+        // The agent's seat, but driven the way a keyboard drives it: the
+        // controller is STK's own PlayerController, fed press and release
+        // events, so steering ramps and skid direction are the game's.
+        return new GymKeyController(kart);
     }
     if (m_expert)
     {
@@ -205,14 +226,25 @@ void GymServer::run()
             line.erase(line.size() - 1);
         if (line.empty()) continue;
 
-        const std::string response = handle(line);
-        fputs(response.c_str(), m_protocol_out);
-        fputc('\n', m_protocol_out);
-        // The client is blocked reading one line and will not send the next
-        // request until it arrives.
-        fflush(m_protocol_out);
+        writeResponse(handle(line));
     }
 }   // run
+
+//-----------------------------------------------------------------------------
+/** Writes one response line, then the frame the request asked for, if any.
+ *  The client is blocked reading the line (and the bytes it announces) and will
+ *  not send the next request until they arrive, hence the flush. */
+void GymServer::writeResponse(const std::string &response)
+{
+    fputs(response.c_str(), m_protocol_out);
+    fputc('\n', m_protocol_out);
+    if (m_frame_ready)
+    {
+        fwrite(m_frame.data(), 1, m_frame.size(), m_protocol_out);
+        m_frame_ready = false;
+    }
+    fflush(m_protocol_out);
+}   // writeResponse
 
 //-----------------------------------------------------------------------------
 /** Reads whatever stdin holds right now and answers each complete line.
@@ -276,10 +308,7 @@ void GymServer::pollOnce()
         if (!line.empty() && line[line.size() - 1] == '\r')
             line.erase(line.size() - 1);
         if (line.empty()) continue;
-        const std::string response = handle(line);
-        fputs(response.c_str(), m_protocol_out);
-        fputc('\n', m_protocol_out);
-        fflush(m_protocol_out);
+        writeResponse(handle(line));
         if (m_quit) break;
     }
     m_pending.erase(0, start);
@@ -322,8 +351,94 @@ std::string GymServer::buildState(int id)
     writer.addBool("ok", true);
     GymState::write(&writer, m_kart_id, (unsigned int)m_lookahead_k,
                     m_include_karts);
+    if (m_frame_ready)
+    {
+        writer.beginObject("frame");
+        writer.addInt   ("width",  m_frame_width);
+        writer.addInt   ("height", m_frame_height);
+        writer.addString("format", "rgb8");
+        writer.endObject();
+    }
     return writer.toString();
 }   // buildState
+
+//-----------------------------------------------------------------------------
+bool GymServer::wantsFrame(const GymJson::Value &request)
+{
+    return request.get("frame").asBool(false);
+}   // wantsFrame
+
+//-----------------------------------------------------------------------------
+/** Says why a frame cannot be delivered, or returns false if it can. Checked
+ *  before the request does anything, so that a refused request has no side
+ *  effect the client did not see the state of. */
+bool GymServer::frameRefused(int id, std::string *response)
+{
+    if (GUIEngine::isNoGraphics())
+    {
+        *response = error(id, ERR_NOT_SUPPORTED,
+                          "no frame without graphics: start the game without "
+                          "--no-graphics (and with --gym-hidden to keep the "
+                          "window off the screen)");
+        return true;
+    }
+    if (m_human)
+    {
+        *response = error(id, ERR_NOT_SUPPORTED,
+                          "in --gym-human mode the game draws on its own "
+                          "clock; frames are only served in --gym mode");
+        return true;
+    }
+#ifndef SERVER_ONLY
+    if (irr_driver->getVideoDriver()->getDriverType() != irr::video::EDT_OPENGL)
+    {
+        *response = error(id, ERR_NOT_SUPPORTED,
+                          "frames need the OpenGL driver (--render-driver="
+                          "opengl): this driver cannot read the screen back");
+        return true;
+    }
+#endif
+    return false;
+}   // frameRefused
+
+//-----------------------------------------------------------------------------
+/** Draws one frame and keeps it. The renderer calls captureFrame() from the
+ *  point where the back buffer is complete, so all this does is arm it. */
+void GymServer::renderFrame()
+{
+    m_frame_ready    = false;
+    m_capture_wanted = true;
+    updateGraphics();
+    m_capture_wanted = false;
+}   // renderFrame
+
+//-----------------------------------------------------------------------------
+void GymServer::captureFrame()
+{
+#ifndef SERVER_ONLY
+    if (!m_capture_wanted) return;
+    m_capture_wanted = false;
+    irr::video::IImage *image = irr_driver->getVideoDriver()
+        ->createScreenShot(irr::video::ECF_R8G8B8, irr::video::ERT_FRAME_BUFFER);
+    if (image == NULL) return;
+    const irr::core::dimension2du size = image->getDimension();
+    const unsigned char *pixels = (const unsigned char*)image->lock();
+    m_frame_width  = size.Width;
+    m_frame_height = size.Height;
+    m_frame.resize((size_t)size.Width * size.Height * 3);
+    // Rows are already top to bottom (the driver flips them); only the pitch
+    // may pad a row, so copy row by row.
+    const unsigned int pitch = image->getPitch();
+    for (unsigned int y = 0; y < size.Height; y++)
+    {
+        memcpy(&m_frame[(size_t)y * size.Width * 3], pixels + (size_t)y * pitch,
+               (size_t)size.Width * 3);
+    }
+    image->unlock();
+    image->drop();
+    m_frame_ready = true;
+#endif
+}   // captureFrame
 
 //-----------------------------------------------------------------------------
 /** The batch form of a response: the same state, wrapped in a one element
@@ -350,6 +465,18 @@ void GymServer::applyAction(const GymJson::Value &action)
 {
     World *world = World::getWorld();
     if (world == NULL) return;
+    GymKeyController *keys = dynamic_cast<GymKeyController*>
+                                    (world->getKart(m_kart_id)->getController());
+    if (keys)
+    {
+        // {"keys":{"left":true,...}}: absent keys are released.
+        const GymJson::Value &held = action.get("keys");
+        bool pressed[GymKeyController::NUM_KEYS];
+        for (int i = 0; i < GymKeyController::NUM_KEYS; i++)
+            pressed[i] = held.get(GymKeyController::KEY_NAMES[i]).asBool(false);
+        keys->setKeys(pressed);
+        return;
+    }
     GymController *controller = dynamic_cast<GymController*>
                                     (world->getKart(m_kart_id)->getController());
     // In expert mode the seat is taken by SkiddingAI, and actions are ignored
@@ -387,6 +514,11 @@ void GymServer::applyAction(const GymJson::Value &action)
  *  histories are identical, so a whole run from process start with a fixed seed
  *  and a fixed action sequence reproduces exactly; individual episodes within a
  *  run are not bit-identical to each other.
+ *
+ *  "Fixed seed" means two seeds: --seed on the command line, which is the only
+ *  one that reaches the kart selection of the AI opponents (made before the
+ *  first reset), and the seed of each reset, which the handler below feeds to
+ *  the AI's rand(), the item boxes and the powerup draws.
  */
 void GymServer::resetRace()
 {
@@ -452,7 +584,9 @@ void GymServer::stepTicks(int ticks)
 //-----------------------------------------------------------------------------
 /** Draws one frame in the windowed mode, so that watching a policy shows a race
  *  rather than a frozen first frame. These are the same calls MainLoop::run
- *  makes, minus input handling: the window is a view, not a controller. */
+ *  makes, minus input handling: the window is a view, not a controller. The
+ *  sound update is the one MainLoop::run makes too, so that a person playing
+ *  through a client that shows the frames also hears the race. */
 void GymServer::updateGraphics()
 {
 #ifndef SERVER_ONLY
@@ -464,6 +598,7 @@ void GymServer::updateGraphics()
     irr_driver->update(frame_duration);
     if (irr_driver->getDevice())
         irr_driver->getDevice()->run();
+    SFXManager::get()->update();
 #endif
 }   // updateGraphics
 
@@ -514,6 +649,18 @@ std::string GymServer::handle(const std::string &line)
         writer.addBool  ("render",       !GUIEngine::isNoGraphics());
         writer.addBool  ("expert",       m_expert);
         writer.addBool  ("human",        m_human);
+        writer.addBool  ("keys",         m_keys);
+        writer.addBool  ("hidden",       m_hidden);
+        std::string why;
+        const bool frames = !frameRefused(id, &why);
+        writer.addBool  ("frame_supported", frames);
+#ifndef SERVER_ONLY
+        if (frames)
+        {
+            writer.addInt("frame_width",  irr_driver->getActualScreenSize().Width);
+            writer.addInt("frame_height", irr_driver->getActualScreenSize().Height);
+        }
+#endif
         writer.endObject();
         return writer.toString();
     }
@@ -540,18 +687,30 @@ std::string GymServer::handle(const std::string &line)
                          "start another child to race a different track");
         }
 
+        std::string refused;
+        const bool frame = wantsFrame(request);
+        if (frame && cmd == "reset_batch")
+            return error(id, ERR_NOT_SUPPORTED, "frames are not batched");
+        if (frame && frameRefused(id, &refused)) return refused;
+
         const GymJson::Value &seed = request.get("seed");
         if (seed.isNumber())
         {
             const int s = seed.asInt(0);
             RandomGenerator::seed(s);
             srand((unsigned int)s);
+            // Item boxes and powerup draws are seeded from the clock when the
+            // track loads; a reset that does not reseed them is not replayable
+            // past the first item.
+            powerup_manager->setRandomSeed((uint64_t)(unsigned int)s);
+            ItemManager::updateRandomSeed((uint32_t)s);
         }
 
         // Restart in place rather than reloading the track, which would cost
         // seconds per episode.
         resetRace();
         m_has_reset = true;
+        if (frame) renderFrame();
 
         return cmd == "reset" ? buildState(id) : buildStateBatch(id);
     }
@@ -589,9 +748,23 @@ std::string GymServer::handle(const std::string &line)
                          "action must be an object of control values, e.g. "
                          "{\"steer\":-0.3,\"accel\":1.0}");
         }
+        if (m_keys && !action->isNull() && !action->get("keys").isObject())
+        {
+            return error(id, ERR_BAD_ACTION,
+                         "in --gym-keys mode the action is {\"keys\":{\"left\":"
+                         "true,...}} with left, right, up, down, nitro, skid, "
+                         "fire and rescue");
+        }
+        std::string refused;
+        const bool frame = wantsFrame(request);
+        if (frame && cmd == "step_batch")
+            return error(id, ERR_NOT_SUPPORTED, "frames are not batched");
+        if (frame && frameRefused(id, &refused)) return refused;
+
         applyAction(*action);
         stepTicks(m_frame_skip);
-        updateGraphics();
+        if (frame) renderFrame();
+        else       updateGraphics();
         return cmd == "step" ? buildState(id) : buildStateBatch(id);
     }
 
@@ -601,6 +774,12 @@ std::string GymServer::handle(const std::string &line)
         if (!m_has_reset)
             return error(id, ERR_NOT_RESET,
                          "reset must be called before state");
+        std::string refused;
+        if (wantsFrame(request))
+        {
+            if (frameRefused(id, &refused)) return refused;
+            renderFrame();
+        }
         return buildState(id);
     }
 

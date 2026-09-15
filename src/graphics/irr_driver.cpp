@@ -27,6 +27,7 @@
 #include "graphics/2dutils.hpp"
 #include "graphics/b3d_mesh_loader.hpp"
 #include "graphics/camera/camera.hpp"
+#include "gym/gym_server.hpp"
 #include "graphics/central_settings.hpp"
 #include "graphics/fixed_pipeline_renderer.hpp"
 #include "graphics/glwrap.hpp"
@@ -581,6 +582,7 @@ begin:
             params.EventReceiver = this;
             params.Fullscreen    = UserConfigParams::m_fullscreen;
             params.SwapInterval  = UserConfigParams::m_swap_interval;
+            params.HiddenWindow  = GymServer::isHidden();
             params.FileSystem    = file_manager->getFileSystem();
             params.WindowSize    =
                 core::dimension2du(UserConfigParams::m_real_width,

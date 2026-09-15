@@ -40,6 +40,7 @@ namespace irr
 			Fullscreen(false),
 			Stencilbuffer(false),
 			SwapInterval(0),
+			HiddenWindow(false),
 			AntiAlias(0),
 			HandleSRGB(false),
 			WithAlphaChannel(false),
@@ -80,6 +81,7 @@ namespace irr
 			Fullscreen = other.Fullscreen;
 			Stencilbuffer = other.Stencilbuffer;
 			SwapInterval = other.SwapInterval;
+			HiddenWindow = other.HiddenWindow;
 			AntiAlias = other.AntiAlias;
 			HandleSRGB = other.HandleSRGB;
 			WithAlphaChannel = other.WithAlphaChannel;
@@ -150,6 +152,13 @@ namespace irr
 		/** 0 = disabled, 1 = full, 2 = half
 		Default: 0 */
 		int SwapInterval;
+
+		//! Create the window hidden and non-resizable (SDL device only).
+		/** A window that is never mapped is never resized by the window
+		manager, so its back buffer keeps exactly the requested size; used
+		for rendering that is read back rather than shown.
+		Default: false */
+		bool HiddenWindow;
 
 		//! Specifies if the device should use fullscreen anti aliasing
 		/** Makes sharp/pixelated edges softer, but requires more

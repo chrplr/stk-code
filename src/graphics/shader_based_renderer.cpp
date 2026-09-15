@@ -21,6 +21,7 @@
 
 #include "config/user_config.hpp"
 #include "graphics/camera/camera.hpp"
+#include "gym/gym_server.hpp"
 #include "graphics/central_settings.hpp"
 #include "graphics/cpu_particle_manager.hpp"
 #include "graphics/frame_buffer_layer.hpp"
@@ -826,6 +827,7 @@ void ShaderBasedRenderer::render(float dt, bool is_loading)
 #endif
 
     PROFILER_PUSH_CPU_MARKER("EndScene", 0x45, 0x75, 0x45);
+    GymServer::captureFrame();
     irr_driver->getVideoDriver()->endScene();
     PROFILER_POP_CPU_MARKER();
 

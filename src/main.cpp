@@ -644,6 +644,13 @@ void cmdLineHelp()
     "                          race: state and reset, polled every frame.\n"
     "                          Keeps the countdown unless -R is given.\n"
     "       --gym-no-karts     Leave the other karts out of the observation.\n"
+    "       --gym-keys         The agent sends the keys it holds (left, right,\n"
+    "                          up, down, nitro, skid, fire, rescue) and STK's\n"
+    "                          own player controller turns them into controls,\n"
+    "                          as it does for a keyboard.\n"
+    "       --gym-hidden       Keep the game window off the screen, for a\n"
+    "                          client that asks for frames and shows them\n"
+    "                          itself. Also turns vsync off.\n"
     "       --sp-shader-debug  Enables debug in sp shader, it will print all unavailable uniforms.\n"
     "       --demo-mode=t      Enables demo mode after t seconds of idle time in "
                                "main menu.\n"
@@ -864,6 +871,8 @@ int handleCmdLineOutputModifier()
         GymServer::enable();
     if (CommandLine::has("--gym-human"))
         GymServer::setHuman(true);
+    if (CommandLine::has("--gym-hidden"))
+        GymServer::setHidden(true);   // implies --gym; the rest is done later
 
     return 0;
 }
@@ -916,6 +925,19 @@ int handleCmdLinePreliminary()
 
     if (CommandLine::has("--sp-shader-debug"))
         SP::SPShader::m_sp_shader_debug = true;
+
+    if (GymServer::isHidden())
+    {
+        // A window nobody sees must not wait for a monitor: with vsync on, a
+        // swap on an unmapped window can block for a frame or for ever,
+        // depending on the driver. Nor may it be fullscreen: that snaps
+        // --screensize to the nearest video mode of the monitor, and the
+        // frame size must be the one asked for. Both are set here rather
+        // than in GymServer::enable, which runs before the config is loaded
+        // and would be overwritten by it.
+        UserConfigParams::m_swap_interval = 0;
+        UserConfigParams::m_fullscreen    = false;
+    }
 
     if(CommandLine::has("--screensize", &s) || CommandLine::has("-s", &s))
     {
@@ -1183,6 +1205,8 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
         GymServer::setExpert(true);
     if (CommandLine::has("--gym-no-karts"))
         GymServer::setIncludeKarts(false);
+    if (CommandLine::has("--gym-keys"))
+        GymServer::setKeys(true);
     if (CommandLine::has("--fps-debug"))
         UserConfigParams::m_fps_debug = true;
     if (CommandLine::has("--rewind") )
@@ -2914,7 +2938,9 @@ static void cleanUserConfig()
     {
         // In case that abort is triggered before user_config exists
         if (UserConfigParams::m_crashed) UserConfigParams::m_crashed = false;
-        user_config->saveConfig();
+        // A gym run sets its own window size and vsync; those must not
+        // become the settings the person finds next time they play.
+        if (!GymServer::isEnabled()) user_config->saveConfig();
         delete user_config;
     }
 

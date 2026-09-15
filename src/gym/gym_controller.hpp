@@ -19,8 +19,10 @@
 #ifndef HEADER_GYM_CONTROLLER_HPP
 #define HEADER_GYM_CONTROLLER_HPP
 
+#include "input/input.hpp"
 #include "karts/controller/kart_control.hpp"
 #include "karts/controller/controller.hpp"
+#include "karts/controller/player_controller.hpp"
 #include "karts/controller/skidding_ai.hpp"
 
 /** The kart control values an external agent asks for.
@@ -110,6 +112,54 @@ public:
     virtual bool saveState(BareNetworkString *buffer) const OVERRIDE;
     virtual void rewindTo(BareNetworkString *buffer) OVERRIDE;
 };   // class GymController
+
+/** The player's seat driven by named keys rather than by control values.
+ *
+ *  A keyboard does not set a steering angle: it sends press and release
+ *  events, and PlayerController turns those into the ramped steering, the
+ *  latched skid direction and the nitro-only-while-accelerating that a person
+ *  playing SuperTuxKart feels. This controller is that PlayerController, with
+ *  the events arriving over the protocol: a step carries the set of keys held
+ *  and every change against the previous set becomes one action() call. An
+ *  agent trained through it and a person playing through fmri-gym's keyboard
+ *  are then subject to the same input rules, which is the point.
+ *
+ *  Like GymController it is a player but not a local one, and makes its own
+ *  camera.
+ *
+ * \ingroup controller
+ */
+class GymKeyController : public PlayerController
+{
+public:
+    enum { NUM_KEYS = 8 };
+    /** The wire names of the keys, in the order of KEY_ACTIONS. */
+    static const char        *KEY_NAMES[NUM_KEYS];
+    static const PlayerAction KEY_ACTIONS[NUM_KEYS];
+
+private:
+    bool m_held[NUM_KEYS];
+
+public:
+             GymKeyController(AbstractKart *kart);
+    virtual ~GymKeyController() {}
+
+    /** Applies a new set of held keys: one press or release per change. */
+    void setKeys(const bool held[NUM_KEYS]);
+    // ------------------------------------------------------------------------
+    virtual void reset() OVERRIDE;
+    // ------------------------------------------------------------------------
+    /** A player, so the AI rubber-bands against it and the race waits for it;
+     *  not a local one: no sound, no achievements, no input device. */
+    virtual bool isLocalPlayerController() const OVERRIDE { return false; }
+    // ------------------------------------------------------------------------
+    virtual void finishedRace(float time) OVERRIDE {}
+    virtual void crashed(const AbstractKart *k) OVERRIDE {}
+    virtual void crashed(const Material *m) OVERRIDE {}
+    virtual void setPosition(int p) OVERRIDE {}
+    virtual void newLap(int lap) OVERRIDE {}
+    virtual bool disableSlipstreamBonus() const OVERRIDE { return false; }
+};   // class GymKeyController
 
 /** STK's own racing AI, sitting in the player's seat as a reference policy.
  *

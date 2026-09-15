@@ -423,11 +423,15 @@ bool CIrrDeviceSDL::createWindow()
 		}
 	}
 
-	u32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+	u32 flags = CreationParams.HiddenWindow ? SDL_WINDOW_HIDDEN
+	                                        : SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
 #if !defined(ANDROID) && !defined(__SWITCH__)
-	if (CreationParams.DriverType == video::EDT_OPENGL ||
+	// A hidden window renders at the requested size in pixels, not at the
+	// display's scale of it: its frames are read back, not shown.
+	if (!CreationParams.HiddenWindow &&
+		(CreationParams.DriverType == video::EDT_OPENGL ||
 		CreationParams.DriverType == video::EDT_OGLES2 ||
-		CreationParams.DriverType == video::EDT_VULKAN)
+		CreationParams.DriverType == video::EDT_VULKAN))
 		flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 #endif
 

@@ -92,3 +92,45 @@ bool GymController::saveState(BareNetworkString *buffer) const
 void GymController::rewindTo(BareNetworkString *buffer)
 {
 }   // rewindTo
+
+//=============================================================================
+const char *GymKeyController::KEY_NAMES[GymKeyController::NUM_KEYS] =
+    { "left", "right", "up", "down", "nitro", "skid", "fire", "rescue" };
+const PlayerAction GymKeyController::KEY_ACTIONS[GymKeyController::NUM_KEYS] =
+    { PA_STEER_LEFT, PA_STEER_RIGHT, PA_ACCEL, PA_BRAKE,
+      PA_NITRO, PA_DRIFT, PA_FIRE, PA_RESCUE };
+
+//-----------------------------------------------------------------------------
+GymKeyController::GymKeyController(AbstractKart *kart) : PlayerController(kart)
+{
+    setControllerName("GymKeyController");
+    for (int i = 0; i < NUM_KEYS; i++) m_held[i] = false;
+    // Same reason as GymController: nobody else creates a camera for a kart
+    // that is not a local player.
+    if (!GUIEngine::isNoGraphics())
+        Camera::createCamera(kart, 0);
+}   // GymKeyController
+
+//-----------------------------------------------------------------------------
+void GymKeyController::reset()
+{
+    PlayerController::reset();
+    for (int i = 0; i < NUM_KEYS; i++) m_held[i] = false;
+}   // reset
+
+//-----------------------------------------------------------------------------
+/** Turns the difference between the keys held now and at the previous step
+ *  into the press and release events the keyboard would have produced. A key
+ *  held across steps produces nothing, exactly as a key held on a keyboard
+ *  does not repeat into the game.
+ *  \param held One flag per entry of KEY_NAMES.
+ */
+void GymKeyController::setKeys(const bool held[NUM_KEYS])
+{
+    for (int i = 0; i < NUM_KEYS; i++)
+    {
+        if (held[i] == m_held[i]) continue;
+        m_held[i] = held[i];
+        action(KEY_ACTIONS[i], held[i] ? Input::MAX_VALUE : 0);
+    }
+}   // setKeys
