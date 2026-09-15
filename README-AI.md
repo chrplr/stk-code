@@ -242,6 +242,20 @@ refused. An experiment harness that presents the game to a participant and
 samples the trajectory at its own rate needs exactly this and nothing more;
 see `python/README.md`, "A person at the wheel".
 
+## 9c. Get the picture, and send the keys
+
+The other way to put a person in front of the game is to make the *environment*
+show them the game: `render_mode="rgb_array"` brings the frame the game drew
+back with every `reset` and `step`, and `action_mode="keys"` lets the client
+send the keys being held — `{"keys": {"left": true, "up": true}}` — to
+SuperTuxKart's own player controller, so that steering ramps and skids latch
+exactly as they do for a keyboard. A harness then draws the frames in its own
+window, reads its own keyboard, and the person and an agent are in front of
+the same environment object, replayable from the seeds and the key vectors.
+The game renders in a window that is created hidden (`--gym-hidden`), at the
+`--screensize` asked for; the frame follows the JSON line as raw bytes. See
+`python/README.md`, "Frames", for the details and the measured cost.
+
 ## 10. Talk to the game yourself
 
 The protocol is plain text and meant to be typed:
@@ -266,6 +280,12 @@ dies.
 termination rule and the observation encoding all live in Python. That is the
 one design rule worth remembering: to change how the agent is rewarded or what
 it sees, you edit Python, and the game is untouched.
+
+One exception to one-object-per-line: a request with `"frame": true` (needs a
+window, so `--gym-hidden` rather than `--no-graphics`) is answered by a line
+that announces `"frame": {"width", "height", "format": "rgb8"}` and is followed
+by that many raw bytes. Pixels do not fit a text protocol, and encoding them as
+text would cost more than drawing them.
 
 Everything the game prints — its own logs, irrlicht's, the sound system's — goes
 to stderr, because `--gym` hands stdout to the protocol and points file
