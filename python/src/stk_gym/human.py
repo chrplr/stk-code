@@ -22,30 +22,9 @@ from typing import Any, Iterable
 from .binary import default_cwd, find_binary
 from .engine import Engine, server_args
 from .env import state_info
-from .obs import progress_of
+from .obs import SAMPLE_FIELDS, flatten_state
 
 __all__ = ["HumanSession", "SAMPLE_FIELDS"]
-
-# The scalars of a state that an analysis wants per sample, in the order they
-# are listed; "controls" is flattened to ctrl_*, and xyz to x, y, z.
-_STATE_SCALARS = (
-    "tick", "time", "phase", "speed", "max_speed", "heading", "pitch", "roll",
-    "distance_down_track", "distance_to_center", "overall_distance",
-    "on_road", "on_ground", "wrong_way", "rank", "finished_laps", "finished",
-    "finish_time", "nitro_energy", "powerup", "num_powerup", "eliminated",
-)
-_CONTROLS = ("steer", "accel", "brake", "nitro", "skid", "fire", "rescue", "look_back")
-#: The keys :meth:`HumanSession.sample` returns, always all of them.
-SAMPLE_FIELDS: tuple[str, ...] = (
-    _STATE_SCALARS + ("x", "y", "z") + tuple("ctrl_" + c for c in _CONTROLS) + ("progress_m",)
-)
-
-
-def _number(value: Any) -> float:
-    """A state field as a float (bools become 0/1); NaN when it is absent."""
-    if isinstance(value, (bool, int, float)):
-        return float(value)
-    return float("nan")
 
 
 class HumanSession:
@@ -120,26 +99,8 @@ class HumanSession:
         return state_info(self._state, self.track_length)
 
     def sample(self) -> dict[str, float]:
-        """The last state as one row of floats, :data:`SAMPLE_FIELDS` every time.
-
-        Booleans are 0/1 and a field the game did not report -- the race gone,
-        as after the pause menu's quit -- is NaN rather than missing, so rows
-        logged side by side stay the same shape.
-        """
-        state = self._state
-        row = {key: _number(state.get(key)) for key in _STATE_SCALARS}
-        xyz = state.get("xyz")
-        if isinstance(xyz, (list, tuple)) and len(xyz) == 3:
-            row["x"], row["y"], row["z"] = (float(c) for c in xyz)
-        else:
-            row["x"] = row["y"] = row["z"] = float("nan")
-        controls = state.get("controls") or {}
-        for key in _CONTROLS:
-            row["ctrl_" + key] = _number(controls.get(key))
-        row["progress_m"] = (
-            float(progress_of(state, self.track_length)) if "tick" in state else float("nan")
-        )
-        return row
+        """The last state as one row of floats, :data:`SAMPLE_FIELDS` every time."""
+        return flatten_state(self._state, self.track_length)
 
     def close(self) -> None:
         engine = getattr(self, "engine", None)

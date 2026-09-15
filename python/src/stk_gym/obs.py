@@ -20,9 +20,9 @@ from typing import Any
 import numpy as np
 from gymnasium import spaces
 
-__all__ = ["OBS_MODES", "space_for", "encode", "progress_of"]
+__all__ = ["OBS_MODES", "space_for", "encode", "progress_of", "SAMPLE_FIELDS", "flatten_state"]
 
-OBS_MODES = ("vector", "vector_karts")
+OBS_MODES = ("vector", "vector_karts", "pixels")
 
 # Scales that turn game units into roughly [-1, 1]. They are constants of the
 # encoding, not of the game: a kart tops out near 25 m/s with a zipper, and the
@@ -61,6 +61,11 @@ def space_for(mode: str, meta: dict[str, Any]) -> spaces.Space:
     """Return the observation space implied by \\p mode and the handshake."""
     if mode not in OBS_MODES:
         raise ValueError(f"unknown obs_mode {mode!r}; choose from {OBS_MODES}")
+    if mode == "pixels":
+        # The size is the game window's, as the handshake reports it: the
+        # requested --screensize, unless the display scales it.
+        shape = (int(meta.get("frame_height", 0)), int(meta.get("frame_width", 0)), 3)
+        return spaces.Box(low=0, high=255, shape=shape, dtype=np.uint8)
     size = _N_SCALARS + 2 * int(meta.get("lookahead_k", 0))
     if mode == "vector_karts":
         size += 4 * int(meta.get("max_karts", 0))
@@ -70,8 +75,12 @@ def space_for(mode: str, meta: dict[str, Any]) -> spaces.Space:
 
 
 def encode(state: dict[str, Any], mode: str, meta: dict[str, Any]) -> np.ndarray:
-    """Encode one state as a float32 array matching :func:`space_for`."""
-    if mode not in OBS_MODES:
+    """Encode one state as a float32 array matching :func:`space_for`.
+
+    ``pixels`` is not encoded from the state at all - the frame comes with the
+    answer - so it is refused here; :class:`StkEnv` never asks.
+    """
+    if mode not in OBS_MODES or mode == "pixels":
         raise ValueError(f"unknown obs_mode {mode!r}; choose from {OBS_MODES}")
 
     lookahead_k = int(meta.get("lookahead_k", 0))
@@ -134,3 +143,51 @@ def encode(state: dict[str, Any], mode: str, meta: dict[str, Any]) -> np.ndarray
                 values += [0.0, 0.0, 0.0, 0.0]
 
     return np.asarray(values, dtype=np.float32)
+
+
+# -- The state as one row of floats -------------------------------------------
+
+# The scalars of a state that an analysis wants per sample, in the order they
+# are listed; "controls" is flattened to ctrl_*, and xyz to x, y, z.
+_STATE_SCALARS = (
+    "tick", "time", "phase", "speed", "max_speed", "heading", "pitch", "roll",
+    "distance_down_track", "distance_to_center", "overall_distance",
+    "on_road", "on_ground", "wrong_way", "rank", "finished_laps", "finished",
+    "finish_time", "nitro_energy", "powerup", "num_powerup", "eliminated",
+)
+_CONTROLS = ("steer", "accel", "brake", "nitro", "skid", "fire", "rescue", "look_back")
+#: The keys :func:`flatten_state` returns, always all of them.
+SAMPLE_FIELDS: tuple[str, ...] = (
+    _STATE_SCALARS + ("x", "y", "z") + tuple("ctrl_" + c for c in _CONTROLS) + ("progress_m",)
+)
+
+
+def _number(value: Any) -> float:
+    """A state field as a float (bools become 0/1); NaN when it is absent."""
+    if isinstance(value, (bool, int, float)):
+        return float(value)
+    return float("nan")
+
+
+def flatten_state(state: dict[str, Any], track_length: float) -> dict[str, float]:
+    """One state as a row of floats, :data:`SAMPLE_FIELDS` every time.
+
+    This is the shape a logger wants: booleans are 0/1, and a field the game
+    did not report - the race gone, as after the pause menu's quit - is NaN
+    rather than missing, so rows logged side by side stay the same shape. The
+    ``ctrl_*`` fields are the controls the kart applied, which for a person at
+    the wheel (or a ``keys`` agent) is the record of what they did.
+    """
+    row = {key: _number(state.get(key)) for key in _STATE_SCALARS}
+    xyz = state.get("xyz")
+    if isinstance(xyz, (list, tuple)) and len(xyz) == 3:
+        row["x"], row["y"], row["z"] = (float(c) for c in xyz)
+    else:
+        row["x"] = row["y"] = row["z"] = float("nan")
+    controls = state.get("controls") or {}
+    for key in _CONTROLS:
+        row["ctrl_" + key] = _number(controls.get(key))
+    row["progress_m"] = (
+        float(progress_of(state, track_length)) if "tick" in state else float("nan")
+    )
+    return row

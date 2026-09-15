@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -36,7 +38,7 @@ def a_state(**overrides):
     return state
 
 
-@pytest.mark.parametrize("mode", OBS_MODES)
+@pytest.mark.parametrize("mode", [m for m in OBS_MODES if m != "pixels"])
 def test_encoding_matches_the_declared_space(mode):
     space = obs_space_for(mode, META)
     obs = encode(a_state(), mode, META)
@@ -121,12 +123,14 @@ def test_unknown_schemes_and_modes_are_refused():
     with pytest.raises(ValueError):
         compute_reward(a_state(), a_state(), scheme="vibes", track_length=LAP)
     with pytest.raises(ValueError):
-        obs_space_for("pixels", META)
+        obs_space_for("pixel_soup", META)
+    with pytest.raises(ValueError):
+        encode(a_state(), "pixels", META)  # frames come with the answer, not from the state
     with pytest.raises(ValueError):
         action_space_for("wiggle")
 
 
-@pytest.mark.parametrize("mode", ACTION_MODES)
+@pytest.mark.parametrize("mode", [m for m in ACTION_MODES if m != "keys"])
 def test_every_sampled_action_converts_to_json_safe_controls(mode):
     space = action_space_for(mode)
     for _ in range(20):
@@ -137,6 +141,43 @@ def test_every_sampled_action_converts_to_json_safe_controls(mode):
             assert type(value) in (float, bool, int), (key, type(value))
         assert -1.0 <= control["steer"] <= 1.0
         assert 0.0 <= control["accel"] <= 1.0
+
+
+def test_keys_actions_are_named_booleans():
+    """MultiBinary.sample() gives int8 flags; the wire wants one plain bool per
+    key, under the key's name, so the server can read them without a table."""
+    from stk_gym.actions import KEYS
+
+    space = action_space_for("keys")
+    assert space.n == len(KEYS)
+    for _ in range(20):
+        control = to_control(space.sample(), "keys")
+        assert tuple(control) == ("keys",)
+        assert tuple(control["keys"]) == KEYS
+        assert all(type(v) is bool for v in control["keys"].values())
+    assert to_control([1, 0, 1, 0, 0, 0, 0, 0], "keys")["keys"] == {
+        "left": True, "right": False, "up": True, "down": False,
+        "nitro": False, "skid": False, "fire": False, "rescue": False,
+    }
+    with pytest.raises(ValueError):
+        to_control([1, 0, 1], "keys")
+
+
+def test_flatten_state_yields_every_field_every_time():
+    from stk_gym.obs import SAMPLE_FIELDS, flatten_state
+
+    row = flatten_state({}, 100.0)
+    assert tuple(row) == SAMPLE_FIELDS
+    assert all(math.isnan(v) for v in row.values()), "every field NaN without a race"
+    row = flatten_state(
+        {"tick": 12, "xyz": [1.0, 2.0, 3.0], "controls": {"brake": True},
+         "finished_laps": 0, "distance_down_track": 5.0},
+        100.0,
+    )
+    assert tuple(row) == SAMPLE_FIELDS
+    assert (row["tick"], row["x"], row["z"], row["ctrl_brake"], row["progress_m"]) == (
+        12.0, 1.0, 3.0, 1.0, 5.0,
+    )
 
 
 def test_skidding_takes_its_direction_from_the_steering():

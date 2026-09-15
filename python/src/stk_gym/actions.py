@@ -16,9 +16,15 @@ from typing import Any
 import numpy as np
 from gymnasium import spaces
 
-__all__ = ["ACTION_MODES", "space_for", "to_control", "DISCRETE_ACTIONS"]
+__all__ = ["ACTION_MODES", "space_for", "to_control", "DISCRETE_ACTIONS", "KEYS"]
 
-ACTION_MODES = ("discrete", "continuous", "continuous_full")
+ACTION_MODES = ("discrete", "continuous", "continuous_full", "keys")
+
+# The keys mode: one flag per key a keyboard player has, in this order. The
+# game's own player controller turns presses and releases into controls, so
+# the steering ramp, the skid direction and nitro-only-while-accelerating are
+# STK's, not this module's. The server needs --gym-keys for it.
+KEYS = ("left", "right", "up", "down", "nitro", "skid", "fire", "rescue")
 
 # The discrete table: five steering positions crossed with accelerate, coast and
 # brake. Small on purpose - it is the easy first target, and every entry is a
@@ -50,6 +56,8 @@ def space_for(mode: str) -> spaces.Space:
             high=np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
+    if mode == "keys":
+        return spaces.MultiBinary(len(KEYS))
     raise ValueError(f"unknown action_mode {mode!r}; choose from {ACTION_MODES}")
 
 
@@ -69,6 +77,10 @@ def to_control(action: Any, mode: str) -> dict[str, Any]:
         return dict(DISCRETE_ACTIONS[index])
 
     values = np.asarray(action, dtype=np.float64).reshape(-1)
+    if mode == "keys":
+        if values.size != len(KEYS):
+            raise ValueError(f"keys action must have {len(KEYS)} values, got {values.size}")
+        return {"keys": {name: bool(v > 0.5) for name, v in zip(KEYS, values)}}
     if mode == "continuous":
         if values.size != 3:
             raise ValueError(f"continuous action must have 3 values, got {values.size}")

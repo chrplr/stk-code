@@ -45,13 +45,14 @@ system-wide SuperTuxKart is almost certainly a release without `--gym`.
 
 ## Observations — `obs_mode`
 
-Both modes are a flat `Box(-inf, inf, (n,), float32)` whose length comes from
-the handshake, never from a constant repeated in Python.
+The vector modes are a flat `Box(-inf, inf, (n,), float32)` whose length comes
+from the handshake, never from a constant repeated in Python.
 
 | mode | contents | length with the defaults |
 |---|---|---|
 | `vector` | 10 scalars about the kart, then `lookahead_k` driveline points as (x, z) in kart-local coordinates | 20 |
 | `vector_karts` | the above plus 4 numbers per opponent, nearest first | 20 + 4·(karts−1) |
+| `pixels` | the frame the game drew, `Box(0, 255, (H, W, 3), uint8)` — see *Frames* below | 360 × 640 × 3 |
 
 The ten scalars are: speed ÷ 30, speed ÷ current max speed, steering, on-road,
 on-ground, wrong-way, `tanh(distance to centre ÷ 5)`, nitro ÷ 100, rank
@@ -69,10 +70,21 @@ the warning is expected.
 | `discrete` | `Discrete(15)` | 5 steering positions × {accelerate, coast, brake} |
 | `continuous` (default) | `Box([-1,0,0], [1,1,1])` | steer, accelerate, brake |
 | `continuous_full` | `Box(·, (5,))` | the above plus nitro and skid, thresholded at 0.5 |
+| `keys` | `MultiBinary(8)` | the keys held: left, right, up, down, nitro, skid, fire, rescue |
 
 The server always accepts the whole control surface — steer, accel, brake,
 nitro, skid, fire, rescue — and `stk_gym.actions` decides which subset the agent
 gets. Adding an action space is a Python edit.
+
+`keys` is different in kind: the game is started with `--gym-keys` and the
+kart is driven by SuperTuxKart's own player controller, which receives one
+press or release event per key that changed since the previous step, exactly
+as a keyboard would send them. Steering therefore ramps over a few tenths of a
+second rather than jumping, a skid takes its direction from the key held when
+it started, nitro only burns while accelerating — the game's rules, not this
+package's. It is the mode for comparing an agent with a person: a harness that
+reads a keyboard and forwards the held keys (fmri-gym does) puts both in front
+of the same environment.
 
 ## Rewards — `reward_scheme`
 
@@ -140,6 +152,33 @@ so this simply leaves `--no-graphics` off. `render()` returns `None` because the
 game's own window does the drawing. `render_mode="ansi"` returns a status line
 instead.
 
+## Frames
+
+```python
+env = stk_gym.StkEnv(render_mode="rgb_array", action_mode="keys",
+                     frame_skip=2, screensize=(640, 360))
+obs, info = env.reset(seed=1)
+frame = env.render()                     # (360, 640, 3) uint8, HUD included
+```
+
+With `render_mode="rgb_array"` (or `obs_mode="pixels"`, which makes the frame
+the observation) every `reset` and `step` brings back the frame the game drew
+for that state, read from the back buffer before it is presented. The game
+renders into a window that is created hidden (`--gym-hidden`): it is never
+mapped, so the window manager never resizes it and the frame is exactly the
+requested `screensize`; vsync is off, so a step never waits for a monitor
+nobody sees; and the game's saved settings are left alone. Pass `hidden=False`
+to watch the window as well.
+
+The frame is the game's own rendering, so it needs a real OpenGL display
+(`--no-graphics` cannot draw, Vulkan cannot read back): the handshake reports
+`frame_supported`, and the constructor refuses to start without it. Each step
+then costs the render plus about 700 KB through the pipe. Measured on an Intel
+Arc (Meteor Lake) laptop, 640×360, four karts, `frame_skip=2` (60 steps/s):
+2.5 ms per step mean, 2.9 ms p95, 8 ms max over 600 steps, against a 16.7 ms
+refresh; the same step without the frame costs 1 ms. `examples/measure_frames.py`
+prints those numbers for the machine it runs on.
+
 ## A person at the wheel
 
 ```python
@@ -166,9 +205,15 @@ present the game to a participant, sample the trajectory at its own rate.
 
 ## Reproducibility
 
-A run reproduces exactly: the same seed and the same actions from process start
-give the same trajectory, bit for bit, in a different process on the same
+A run reproduces exactly: the same seeds and the same actions from process
+start give the same trajectory, bit for bit, in a different process on the same
 machine.
+
+"Seeds", plural. `reset(seed=...)` seeds the AI's random draws, the item boxes
+and the powerup draws for the episode. The choice of the AI karts themselves
+is made once, before the first reset, from the game's launch seed:
+`StkEnv(seed=...)` passes `--seed=...` on the command line, and a run with
+opponents is only reproducible with it.
 
 Individual episodes *within* a run are not bit-identical to each other. A
 restart does not restore the physics world completely, and how much the world
@@ -206,6 +251,15 @@ One JSON object per line in each direction, paired by `id`. Commands are
 for a batch of one. Failures answer `{"ok":false,"kind":"...","error":"..."}`
 with `kind` one of `bad_json`, `unknown_cmd`, `no_such_env`, `bad_action`,
 `not_reset`, `bad_batch`, `not_supported`.
+
+The one departure from one-object-per-line is the frame. A `reset`, `step` or
+`state` request with `"frame": true` is answered by a line that also carries
+`"frame": {"width": W, "height": H, "format": "rgb8"}`, followed — after that
+line's newline — by exactly `W*H*3` raw bytes: rows top to bottom, RGB. Start
+the game with a window (`--gym-hidden` for one that stays off the screen) and a
+`--screensize`; the handshake says `frame_supported` and the size. With
+`--gym-keys` the action is `{"keys": {"left": true, "up": true}}` — absent keys
+are released — and the game's own player controller drives.
 
 The server reports facts and never a reward: the reward scheme, the termination
 rule and the observation encoding all live here in Python, so changing any of

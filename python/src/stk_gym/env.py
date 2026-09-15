@@ -14,6 +14,7 @@ from . import actions as _actions
 from . import obs as _obs
 from .binary import default_cwd, find_binary
 from .engine import Engine, server_args
+from .obs import flatten_state
 
 __all__ = ["StkEnv", "REWARD_SCHEMES", "compute_reward", "state_info"]
 
@@ -99,9 +100,15 @@ class StkEnv(gymnasium.Env):
     half a second, so ``reset`` restarts the race in place instead, which costs
     well under a millisecond. Racing a different track means a different
     environment.
+
+    ``render_mode="rgb_array"`` (or ``obs_mode="pixels"``) makes every reset
+    and step bring back the frame the game drew, rendered in a window that is
+    kept off the screen; a harness that shows the frames itself and forwards
+    the keys it reads - fmri-gym - then gives a person exactly the environment
+    an agent gets, ``action_mode="keys"`` included.
     """
 
-    metadata = {"render_modes": ["human", "ansi"], "render_fps": 20}
+    metadata = {"render_modes": ["human", "ansi", "rgb_array"], "render_fps": 20}
 
     def __init__(
         self,
@@ -117,6 +124,9 @@ class StkEnv(gymnasium.Env):
         lookahead: int | None = None,
         expert: bool = False,
         render_mode: str | None = None,
+        screensize: str | tuple[int, int] | None = None,
+        hidden: bool | None = None,
+        seed: int | None = None,
         binary: str | None = None,
         cwd: str | None = None,
         capture_stderr: bool = False,
@@ -139,6 +149,12 @@ class StkEnv(gymnasium.Env):
         self.reward_scheme = reward_scheme
         self.render_mode = render_mode
         self.expert = expert
+        # Frames are asked for on every reset and step, so that the observation
+        # (or render()) is the frame of the state it comes with.
+        self._wants_frames = render_mode == "rgb_array" or obs_mode == "pixels"
+        self._frame: np.ndarray | None = None
+        if hidden is None:
+            hidden = self._wants_frames
 
         path = find_binary(binary)
         self.engine = Engine(
@@ -152,13 +168,23 @@ class StkEnv(gymnasium.Env):
                 lookahead=lookahead,
                 expert=expert,
                 include_karts=obs_mode == "vector_karts",
-                render=render_mode == "human",
+                render=render_mode == "human" or self._wants_frames,
+                hidden=hidden,
+                keys=action_mode == "keys",
+                seed=seed,
+                screensize=screensize,
             ),
             cwd=cwd if cwd is not None else default_cwd(path),
             capture_stderr=capture_stderr,
         )
 
         meta = self.engine.meta
+        if self._wants_frames and not meta.get("frame_supported"):
+            self.close()
+            raise RuntimeError(
+                "this game cannot serve frames: an older binary, no display, "
+                "or a driver other than OpenGL (see the game's stderr)"
+            )
         # The spaces come from the handshake rather than from constants
         # duplicated here, so the two sides cannot drift apart.
         self.observation_space = _obs.space_for(obs_mode, meta)
@@ -175,6 +201,8 @@ class StkEnv(gymnasium.Env):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)  # seeds self.np_random
         message: dict[str, Any] = {"cmd": "reset"}
+        if self._wants_frames:
+            message["frame"] = True
         if seed is not None:
             message["seed"] = int(seed)
         if options:
@@ -186,13 +214,16 @@ class StkEnv(gymnasium.Env):
             for key in options:
                 if key != "seed":
                     message.setdefault("options", {})[key] = options[key]
-        self._state = self.engine.state(message)
+        self._state = self._exchange(message)
         return self._observation(), self._info()
 
     def step(self, action):
         previous = self._state
         control = _actions.to_control(action, self.action_mode)
-        self._state = self.engine.state({"cmd": "step", "action": control})
+        message: dict[str, Any] = {"cmd": "step", "action": control}
+        if self._wants_frames:
+            message["frame"] = True
+        self._state = self._exchange(message)
         reward = compute_reward(
             previous,
             self._state,
@@ -204,6 +235,8 @@ class StkEnv(gymnasium.Env):
         return self._observation(), reward, terminated, False, self._info()
 
     def render(self):
+        if self.render_mode == "rgb_array":
+            return self._frame
         if self.render_mode == "ansi":
             s = self._state
             return (
@@ -230,9 +263,22 @@ class StkEnv(gymnasium.Env):
     def __del__(self):
         self.close()
 
+    def sample(self) -> dict[str, float]:
+        """The current state as one row of floats, :data:`stk_gym.obs.SAMPLE_FIELDS`."""
+        return flatten_state(self._state, self.track_length)
+
     # -- Internals -----------------------------------------------------------
 
+    def _exchange(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Send one request; keep the frame it brings, return its state."""
+        answer = self.engine.request(message)
+        if "frame" in answer:
+            self._frame = answer["frame"]
+        return answer["state"]
+
     def _observation(self) -> np.ndarray:
+        if self.obs_mode == "pixels":
+            return self._frame
         return _obs.encode(self._state, self.obs_mode, self.engine.meta)
 
     def _info(self) -> dict[str, Any]:

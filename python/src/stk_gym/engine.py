@@ -5,7 +5,10 @@
 
 One :class:`Engine` owns one ``supertuxkart --gym`` child process and speaks to
 it in strict alternation: write one line, read one line. That is the whole
-transport. Everything about the race itself is decided on the other side.
+transport - with one exception: an answer that announces a frame
+(``"frame": {"width", "height", "format"}``) is followed by that many raw RGB
+bytes, which :meth:`Engine.recv` reads and hands back as an array in the same
+slot. Everything about the race itself is decided on the other side.
 
 There is exactly one race per process - World, RaceManager and the physics world
 are all globals in the game - so a vector environment runs several children
@@ -20,6 +23,8 @@ import json
 import subprocess
 import weakref
 from typing import Any, Iterable
+
+import numpy as np
 
 __all__ = ["Engine", "EngineError", "EngineDied", "ProtocolError", "CommandFailed",
            "server_args", "PROTOCOL"]
@@ -189,7 +194,23 @@ class Engine:
             raise CommandFailed(
                 answer.get("kind", "unknown"), answer.get("error", ""), payload
             )
+        if "frame" in answer:
+            answer["frame"] = self._read_frame(answer["frame"])
         return answer
+
+    def _read_frame(self, header: dict[str, Any]) -> np.ndarray:
+        """Read the pixel block a response announced, as an ``(H, W, 3)`` uint8 array."""
+        width, height = int(header["width"]), int(header["height"])
+        if header.get("format") != "rgb8":
+            self.close()
+            raise ProtocolError(f"unknown frame format {header.get('format')!r}")
+        size = width * height * 3
+        # A BufferedReader's read(n) loops until n bytes or EOF, and any bytes
+        # readline() took ahead are still in its buffer, so this cannot skip.
+        raw = self._proc.stdout.read(size)
+        if len(raw) != size:
+            raise self._died(f"frame cut short: {len(raw)} of {size} bytes")
+        return np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
 
     def state(self, message: dict[str, Any]) -> dict[str, Any]:
         """Send a request that answers with one state, and return that state."""
@@ -262,8 +283,11 @@ def server_args(
     include_karts: bool = True,
     render: bool = False,
     human: bool = False,
+    hidden: bool = False,
+    keys: bool = False,
+    seed: int | None = None,
     fullscreen: bool = False,
-    screensize: str | None = None,
+    screensize: str | tuple[int, int] | None = None,
     race_now: bool = False,
     extra: Iterable[str] = (),
 ) -> list[str]:
@@ -278,9 +302,15 @@ def server_args(
     the game keeps its own clock and input, the protocol only reports) and
     implies a window; ``fullscreen``, ``screensize`` and ``race_now`` (skip the
     countdown) are the game's own flags, and ``extra`` passes any others.
+    ``hidden`` renders into a window that is never shown (``--gym-hidden``),
+    for a client that asks for frames and displays them itself; it implies
+    rendering. ``keys`` seats STK's own player controller and sends it the keys
+    held (``--gym-keys``). ``seed`` is the game's launch seed (``--seed``), the
+    only one that reaches the choice of the AI karts, made before the first
+    reset.
     """
     args: list[str] = ["--gym-human" if human else "--gym"]
-    if not render and not human:
+    if not render and not human and not hidden:
         args.append("--no-graphics")
     for flag, value in (
         ("--track", track),
@@ -296,9 +326,17 @@ def server_args(
         args.append("--gym-expert")
     if not include_karts:
         args.append("--gym-no-karts")
+    if hidden:
+        args.append("--gym-hidden")
+    if keys:
+        args.append("--gym-keys")
+    if seed is not None:
+        args.append(f"--seed={int(seed)}")
     if fullscreen:
         args.append("--fullscreen")
     if screensize:
+        if not isinstance(screensize, str):
+            screensize = "{}x{}".format(*screensize)
         args.append(f"--screensize={screensize}")
     if race_now:
         args.append("--race-now")
