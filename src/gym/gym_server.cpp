@@ -42,6 +42,7 @@
 #include <iostream>
 
 #ifndef SERVER_ONLY
+#  include "graphics/gl_headers.hpp"
 #  include <IImage.h>
 #  include <IrrlichtDevice.h>
 #  include <IVideoDriver.h>
@@ -74,6 +75,11 @@ std::vector<unsigned char> GymServer::m_frame;
 unsigned int GymServer::m_frame_width  = 0;
 unsigned int GymServer::m_frame_height = 0;
 bool  GymServer::m_frame_ready   = false;
+unsigned int GymServer::m_offscreen_fbo    = 0;
+unsigned int GymServer::m_offscreen_color  = 0;
+unsigned int GymServer::m_offscreen_depth  = 0;
+unsigned int GymServer::m_offscreen_width  = 0;
+unsigned int GymServer::m_offscreen_height = 0;
 FILE *GymServer::m_protocol_out  = NULL;
 
 /** Bumped whenever the wire format changes in a way a client must notice. The
@@ -402,11 +408,99 @@ bool GymServer::frameRefused(int id, std::string *response)
 }   // frameRefused
 
 //-----------------------------------------------------------------------------
+/** Creates the framebuffer the frame is drawn into in hidden mode, or resizes
+ *  it if the window changed size. A no-op once it exists at the right size, and
+ *  in every mode where the window's own back buffer can be read: see
+ *  m_offscreen_fbo for why a hidden window needs one at all.
+ *
+ *  Called from renderFrame() before the frame is drawn, since this has to be
+ *  the target of the drawing, not just of the readback. */
+void GymServer::ensureOffscreen()
+{
+#ifndef SERVER_ONLY
+    if (!m_hidden || GUIEngine::isNoGraphics()) return;
+    if (irr_driver->getVideoDriver()->getDriverType() != irr::video::EDT_OPENGL)
+        return;
+    const irr::core::dimension2du size = irr_driver->getActualScreenSize();
+    if (size.Width == 0 || size.Height == 0) return;
+    if (m_offscreen_fbo  != 0 && m_offscreen_width == size.Width &&
+        m_offscreen_height == size.Height)
+    {
+        return;
+    }
+    releaseOffscreen();
+
+    glGenTextures(1, &m_offscreen_color);
+    glBindTexture(GL_TEXTURE_2D, m_offscreen_color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size.Width, size.Height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // The 2D passes and the race GUI draw with depth test and stencil, exactly
+    // as they do into a window, so both have to be here as well.
+    glGenRenderbuffers(1, &m_offscreen_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_offscreen_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+                          size.Width, size.Height);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+    glGenFramebuffers(1, &m_offscreen_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_offscreen_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           m_offscreen_color, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_RENDERBUFFER, m_offscreen_depth);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        // Nothing to fall back to: reading the hidden window back instead would
+        // serve the desktop as if it were the race, which is the bug this
+        // framebuffer exists to fix. Say so and leave frames unavailable.
+        Log::error("GymServer", "The offscreen framebuffer for --gym-hidden is "
+                   "incomplete (status 0x%x); frames cannot be served. Run "
+                   "without --gym-hidden to render into the window instead.",
+                   (unsigned int)status);
+        releaseOffscreen();
+        return;
+    }
+    m_offscreen_width  = size.Width;
+    m_offscreen_height = size.Height;
+    Log::info("GymServer", "Rendering into an offscreen framebuffer of %dx%d, "
+              "as the hidden window has no readable one.",
+              m_offscreen_width, m_offscreen_height);
+#endif
+}   // ensureOffscreen
+
+//-----------------------------------------------------------------------------
+/** Deletes the offscreen framebuffer and its attachments, and forgets its size.
+ *  Safe to call when there is none. */
+void GymServer::releaseOffscreen()
+{
+#ifndef SERVER_ONLY
+    if (m_offscreen_fbo != 0)
+        glDeleteFramebuffers(1, &m_offscreen_fbo);
+    if (m_offscreen_color != 0)
+        glDeleteTextures(1, &m_offscreen_color);
+    if (m_offscreen_depth != 0)
+        glDeleteRenderbuffers(1, &m_offscreen_depth);
+    m_offscreen_fbo    = 0;
+    m_offscreen_color  = 0;
+    m_offscreen_depth  = 0;
+    m_offscreen_width  = 0;
+    m_offscreen_height = 0;
+#endif
+}   // releaseOffscreen
+
+//-----------------------------------------------------------------------------
 /** Draws one frame and keeps it. The renderer calls captureFrame() from the
- *  point where the back buffer is complete, so all this does is arm it. */
+ *  point where the frame is complete, so all this does is make sure there is
+ *  something to draw into and arm the hook. */
 void GymServer::renderFrame()
 {
     m_frame_ready    = false;
+    ensureOffscreen();
     m_capture_wanted = true;
     updateGraphics();
     m_capture_wanted = false;
@@ -418,6 +512,37 @@ void GymServer::captureFrame()
 #ifndef SERVER_ONLY
     if (!m_capture_wanted) return;
     m_capture_wanted = false;
+    if (m_offscreen_fbo != 0)
+    {
+        // createScreenShot() cannot read this one: it asks for GL_BACK, which
+        // only a window's framebuffer has. Read the colour attachment instead.
+        const unsigned int w = m_offscreen_width;
+        const unsigned int h = m_offscreen_height;
+        m_frame_width  = w;
+        m_frame_height = h;
+        m_frame.resize((size_t)w * h * 3);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_offscreen_fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, m_frame.data());
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_offscreen_fbo);
+        // OpenGL's first row is the bottom one and the protocol promises rows
+        // top to bottom, so swap them in place -- the driver's flip in
+        // createScreenShot() does not happen on this path.
+        const size_t stride = (size_t)w * 3;
+        std::vector<unsigned char> row(stride);
+        for (unsigned int y = 0; y < h / 2; y++)
+        {
+            unsigned char *top    = &m_frame[(size_t)y * stride];
+            unsigned char *bottom = &m_frame[(size_t)(h - 1 - y) * stride];
+            memcpy(row.data(), top,        stride);
+            memcpy(top,        bottom,     stride);
+            memcpy(bottom,     row.data(), stride);
+        }
+        m_frame_ready = true;
+        return;
+    }
     irr::video::IImage *image = irr_driver->getVideoDriver()
         ->createScreenShot(irr::video::ECF_R8G8B8, irr::video::ERT_FRAME_BUFFER);
     if (image == NULL) return;

@@ -84,6 +84,26 @@ private:
     static unsigned int m_frame_height;
     static bool         m_frame_ready;
 
+    /** The framebuffer object the frame is drawn into while the window is
+     *  hidden, or 0 when the window is on the screen and its own back buffer
+     *  is what gets drawn and read.
+     *
+     *  A window that is never mapped has no usable default framebuffer: X11
+     *  leaves its contents undefined, so the readback returns whatever happens
+     *  to be on the screen at those coordinates -- the desktop, or black --
+     *  while the game reports a race running correctly. Some drivers do keep a
+     *  valid buffer, which is why this went unnoticed at first; none of them
+     *  promise to. A framebuffer object is defined everywhere, mapped window or
+     *  not, so in hidden mode this is what IrrDriver::getDefaultFramebuffer()
+     *  hands to everything that draws "to the screen", and what captureFrame()
+     *  reads back. The colour attachment is a texture and the depth/stencil a
+     *  renderbuffer, sized to the window and rebuilt if that size changes. */
+    static unsigned int m_offscreen_fbo;
+    static unsigned int m_offscreen_color;
+    static unsigned int m_offscreen_depth;
+    static unsigned int m_offscreen_width;
+    static unsigned int m_offscreen_height;
+
     /** The real stdout, saved before file descriptor 1 is pointed at stderr.
      *  Everything STK, irrlicht or a bundled library prints then lands on
      *  stderr, and this descriptor carries the protocol and nothing else. */
@@ -105,6 +125,8 @@ private:
     std::string  buildStateBatch(int id);
     bool         frameRefused(int id, std::string *response);
     void         renderFrame();
+    static void  ensureOffscreen();
+    static void  releaseOffscreen();
     void         writeResponse(const std::string &response);
     bool         checkEnvId(const GymJson::Value &request, int *id_out,
                             std::string *response);
@@ -138,8 +160,14 @@ public:
 
     /** Reads the frame back if a request asked for one. Called by the
      *  renderers right before the buffers are swapped, which is the one point
-     *  where the back buffer holds a complete frame, HUD included. */
+     *  where the frame is complete, HUD included. */
     static void  captureFrame();
+
+    /** The framebuffer everything should draw into, or 0 for the window's own.
+     *  Non-zero only in hidden mode, where the window's default framebuffer
+     *  cannot be read back (see m_offscreen_fbo); IrrDriver::
+     *  getDefaultFramebuffer() returns this in its place. */
+    static unsigned int offscreenFramebuffer() { return m_offscreen_fbo; }
 
     /** Builds the controller for the kart in the player slot. Called from
      *  World::createKart so that all the gym specific knowledge stays here. */
