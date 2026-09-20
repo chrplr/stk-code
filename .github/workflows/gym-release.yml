@@ -1,0 +1,220 @@
+# Copyright (c) 2026 SuperTuxKart-Team
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Releases the gym: the engine and its asset pack to a GitHub release, and the
+# Python client to PyPI, both from one tag.
+#
+# This is a fork-only workflow and deliberately separate from linux.yml and the
+# other upstream ones, which it must never need to touch: upstream is merged
+# into this branch regularly and a conflict in a shared file would be a recurring
+# tax. It triggers on `gym-v*` tags for the same reason -- upstream's own `v*`
+# tags must not set a gym release going.
+#
+# The tag is the contract. supertuxkart_gym.__version__ is the tag the package
+# downloads its engine from, so the two cannot be allowed to disagree; the
+# check-version job below refuses the tag before anything is built.
+
+name: gym-release
+
+on:
+  push:
+    tags:
+      - "gym-v*"
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - ".github/workflows/gym-release.yml"
+      - "tools/gym/**"
+      - "python/**"
+
+env:
+  # Pinned so a release can be rebuilt: the assets live in Subversion and its
+  # trunk moves. Bump this together with the revision recorded in the manifest
+  # header, and regenerate the manifest when you do.
+  ASSETS_SVN: https://svn.code.sf.net/p/supertuxkart/code/stk-assets
+  ASSETS_REV: "18626"
+
+jobs:
+  # Refuse a tag the package does not carry, before any artifact exists. A wheel
+  # whose version is not the release tag downloads an engine that is not there.
+  check-version:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches stk_gym.__version__
+        run: |
+          PKG=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' python/src/stk_gym/__init__.py)
+          TAG="${{ github.ref_name }}"
+          if [ "gym-v$PKG" != "$TAG" ]; then
+            echo "tag $TAG but python/src/stk_gym/__init__.py says $PKG" >&2
+            echo "bump __version__ to ${TAG#gym-v}: it is the release the package fetches its engine from" >&2
+            exit 1
+          fi
+
+  build:
+    # NOT ubuntu-latest. The binary is dynamically linked against the runner's
+    # glibc, so the runner sets the oldest system the release can run on -- a
+    # build on a current distro produced a binary needing GLIBC_2.43, which
+    # starts on almost nothing. Raise this only to raise that floor knowingly.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libbluetooth-dev \
+            libcurl4-gnutls-dev libfreetype6-dev libharfbuzz-dev libjpeg-dev \
+            libogg-dev libopenal-dev libpng-dev libsdl2-dev libvorbis-dev \
+            pkg-config zlib1g-dev subversion
+
+      - name: Build the game
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCHECK_ASSETS=off -DBUILD_RECORDER=off -DNO_SHADERC=on
+          cmake --build build -j"$(nproc)"
+
+      # Only the directories the manifest draws from, not the whole 1.5 GB tree.
+      # They come down whole and make_asset_pack.sh then prunes them to the files
+      # a race opens; exporting per-file would be 1137 round trips to SourceForge.
+      #
+      # tracks/ is fetched entire even though only five are playable: the game
+      # scans every track directory at startup, so the manifest legitimately
+      # carries a track.xml and an icon for all 44. Dropping the other 39 would
+      # save about 10 MB in the pack and has not been tested.
+      - name: Fetch stk-assets
+        run: |
+          for d in karts library models sfx textures music tracks; do
+            svn export -q -r "$ASSETS_REV" "$ASSETS_SVN/$d" "stk-assets/$d"
+          done
+          du -sh stk-assets
+
+      - name: Assemble the asset pack
+        run: |
+          sh tools/gym/make_asset_pack.sh stk-assets build/bin/supertuxkart pack
+
+      # The frame comparison that would catch a pack missing textures needs a GL
+      # context, which these runners do not have; it is a local step, documented
+      # in tools/gym/verify_pack.py. What CI can do is prove the pack is
+      # self-sufficient: every track starts and steps with nothing but the pack
+      # on disk, from a cold cache. That catches an outright absent file.
+      - name: Smoke-test every track against the pack alone
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python[dev]"
+          rm -rf ~/.cache/supertuxkart
+          # Only the binary is pointed at, deliberately. The pack is laid out to
+          # resolve its own data and assets, and that is what users get; setting
+          # SUPERTUXKART_DATADIR here would test a path nobody runs and hide a
+          # pack whose layout is wrong.
+          export STK_ENV_BIN="$PWD/pack/supertuxkart"
+          # The playable tracks, from the manifest header. Not the track
+          # directories in the manifest body: those are all 44, most of them
+          # present only as the metadata the startup scan reads, and a third of
+          # them arenas or cutscenes that cannot be raced at all.
+          for t in $(sed -n 's/^# tracks: //p' tools/gym/asset-manifest.txt); do
+            python - "$t" <<'EOF'
+          import sys
+          from stk_gym import StkEnv
+          track = sys.argv[1]
+          env = StkEnv(num_karts=4, laps=1, track=track)
+          env.reset(seed=0)
+          for _ in range(120):
+              obs, r, term, trunc, info = env.step(env.action_space.sample())
+              if term or trunc:
+                  break
+          env.close()
+          print(f"  {track}: ok")
+          EOF
+          done
+
+      # xz, not zstd. The package unpacks this with the standard library, and
+      # tarfile only learned zstd in Python 3.14 while this package supports
+      # 3.10. xz is also the smaller of the two here (160 MB against 168 MB)
+      # and decompresses faster, so nothing is given up.
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mv pack "SuperTuxKart-gym-linux-x86_64"
+          tar -cJf "SuperTuxKart-gym-linux-x86_64.tar.xz" \
+            "SuperTuxKart-gym-linux-x86_64"
+          ls -lh SuperTuxKart-gym-linux-x86_64.tar.xz
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: gym-linux-x86_64
+          path: SuperTuxKart-gym-linux-x86_64.tar.xz
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build, check-version]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # The package verifies what it downloads against this file, so it is part
+      # of the release, not a convenience.
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum SuperTuxKart-gym-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SuperTuxKart gym ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            The engine and asset pack for `supertuxkart-gym`
+            ${{ github.ref_name }}. `pip install supertuxkart-gym` and the
+            package fetches this on first use; there is no need to download it
+            by hand.
+
+            Linux x86_64, built on Ubuntu 22.04. SuperTuxKart is GPL-3.0-or-later
+            and the corresponding source is this repository at this tag.
+          files: |
+            artifacts/SuperTuxKart-gym-*
+            artifacts/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The wheel goes out only once the release it downloads from exists.
+  # Publishing is by PyPI's trusted publishing (OpenID Connect), which needs the
+  # project on pypi.org to list this repository, this workflow file and the
+  # "pypi" environment as a publisher -- no token is stored anywhere.
+  pypi:
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    if: startsWith(github.ref, 'refs/tags/')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build python/
+          ls -l python/dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/
