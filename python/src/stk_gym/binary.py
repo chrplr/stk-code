@@ -141,15 +141,22 @@ def default_cwd(binary: str | os.PathLike[str]) -> str | None:
     A downloaded pack is deliberately shaped like a checkout, so it is served
     the same way: its ``stk`` directory holds ``data`` and sits beside
     ``stk-assets``, and the game resolves both from there unaided.
+
+    A pack the binary sits in wins over any checkout that happens to enclose
+    it. Unpacking a pack inside a checkout is an ordinary thing to do -- it is
+    what the release workflow does -- and serving it the checkout's working
+    directory sends the game looking for assets beside the checkout, where
+    there are none. Whichever is nearer the binary is the one that owns it,
+    and that is always the pack.
     """
     if os.environ.get("SUPERTUXKART_DATADIR"):
         return None
-    for parent in Path(binary).resolve().parents:
-        if (parent / _MARKER).is_file():
-            return str(parent)
     pack = find_pack(binary)
     if pack is not None:
         return str(pack / "stk")
+    for parent in Path(binary).resolve().parents:
+        if (parent / _MARKER).is_file():
+            return str(parent)
     return str(find_repo()) if find_repo() is not None else None
 
 
