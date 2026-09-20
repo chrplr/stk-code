@@ -50,6 +50,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# This tool checks a pack that is already on disk; it must never fetch one.
+# find_binary's last resort is a 255 MB download, and a verification step that
+# quietly installs the artefact it is verifying is worse than no check at all.
+os.environ.setdefault("STK_ENV_OFFLINE", "1")
+
 import numpy as np
 
 FRAME = """
@@ -137,13 +142,30 @@ def missing_assets(binary: Path, cwd: Path, track: str,
     return sorted(names)
 
 
-def reference_game() -> tuple[Path, Path]:
-    """The checkout's own binary and the directory to run it from."""
-    from stk_gym.binary import default_cwd, find_binary
+def reference_game(explicit: Path | None = None) -> tuple[Path, Path]:
+    """The checkout's own build, and the directory to run it from.
 
-    binary = Path(find_binary())
-    cwd = default_cwd(binary)
-    return binary, Path(cwd) if cwd else binary.parent
+    Deliberately not find_binary(): its last resort is to download the release
+    pack, which is the very thing being verified, and in CI -- package
+    installed into site-packages, no checkout above it -- that is exactly the
+    branch it takes. It then fails on a release that this run is meant to
+    produce. The reference is always the build in the checkout this script
+    lives in.
+    """
+    if explicit is not None:
+        return explicit, explicit.parent
+    repo = Path(__file__).resolve().parents[2]
+    for candidate in (repo / "build" / "bin" / "supertuxkart",
+                      repo / "build" / "supertuxkart",
+                      repo / "cmake_build" / "bin" / "supertuxkart"):
+        if candidate.exists():
+            # Run from the checkout root, where ./data/ and ../../stk-assets
+            # resolve the way the game expects.
+            return candidate, repo
+    raise SystemExit(
+        f"no built supertuxkart in {repo}; build it, or pass "
+        "--reference-binary"
+    )
 
 
 def diff(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
@@ -158,6 +180,9 @@ def main() -> int:
     ap.add_argument("--assets", required=True, type=Path,
                     help="the full stk-assets checkout, as the reference")
     ap.add_argument("--tracks", nargs="+", default=TRACKS)
+    ap.add_argument("--reference-binary", type=Path, default=None,
+                    help="the binary to render the reference with "
+                         "(default: this checkout's build)")
     ap.add_argument("--no-frames", action="store_true",
                     help="skip the frame comparison, which needs a GL context. "
                          "Leaves the completeness check, which does not, and is "
@@ -185,7 +210,7 @@ def main() -> int:
     print("Assets the game cannot find (a complete pack: none)\n")
     print(f"{'track':<22}{'full':>8}{'pack':>8}   verdict")
     incomplete = {}
-    ref_binary, ref_cwd = reference_game()
+    ref_binary, ref_cwd = reference_game(args.reference_binary)
     for track in args.tracks:
         # The control is measured, not assumed: if the reference tree is itself
         # incomplete, the pack should not be blamed for matching it.
