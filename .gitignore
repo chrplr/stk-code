@@ -97,3 +97,6 @@ lib/shaderc
 # Python package build and cache artefacts
 python/**/__pycache__/
 python/**/*.egg-info/
+
+# Python package build output
+python/dist/

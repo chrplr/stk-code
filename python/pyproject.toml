@@ -4,7 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "supertuxkart-gym"
-version = "0.1.0"
+# The version lives in src/stk_gym/__init__.py: it is also the release tag
+# the package fetches its engine and asset pack from, so it must match the
+# tag being cut (gym-v<version>).
+dynamic = ["version"]
 description = "SuperTuxKart as a Gymnasium environment, driving the real game over a JSON-lines protocol"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +19,8 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
 ]
 dependencies = ["gymnasium>=1.0", "numpy>=1.21"]
 
@@ -24,7 +29,11 @@ dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
 rl = ["stable-baselines3>=2.3"]
 
 [project.urls]
-Homepage = "https://supertuxkart.net"
+Homepage = "https://github.com/chrplr/stk-code"
+Game = "https://supertuxkart.net"
+
+[tool.hatch.version]
+path = "src/stk_gym/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stk_gym"]
