@@ -2,15 +2,25 @@
 # Copyright (c) 2026 SuperTuxKart-Team
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Check an asset pack renders what the full stk-assets renders.
+"""Check an asset pack is as complete as the full stk-assets.
 
-A pack missing a texture does not crash and does not warn: the material falls
-back to a flat colour and the race runs to completion with an exit status of 0.
-The first pack built for this tool passed its test suite while drawing an
-untextured white landscape. So "it ran" proves nothing, and this compares
-pixels instead.
+A pack missing a texture does not crash: the material falls back and the race
+runs to completion with an exit status of 0. The first pack built for this tool
+passed its test suite while drawing an untextured white landscape. So "it ran"
+proves nothing, and two independent checks are run instead.
 
-Two details make the comparison mean something:
+**What the game says it could not find.** Every texture it fails to resolve is
+named on its log, and a complete pack produces not one such line -- the full
+asset set scores exactly zero, which makes this a check with no noise floor to
+argue about. It is the sharper of the two: the second pack built here rendered
+close enough to pass the frame comparison below while quietly missing 284
+textures, and only the log said so.
+
+**What it actually drew.** The log cannot catch a file that resolves to the
+wrong content, or an asset that is found but never reached, so frames are
+compared too.
+
+Two details make the frame comparison mean something:
 
 * Compare the frame at reset, not during a race. Two runs of the same race with
   the same seed and the same actions diverge -- 98% of pixels differ by the
@@ -58,6 +68,13 @@ TRACKS = ["hacienda", "cornfield_crossing", "snowmountain", "lighthouse", "scotl
 # scored 90x its control -- so this does not need to be tight.
 TOLERANCE = 4.0
 
+# A control this bad is not a noise floor, it is a broken measurement: the
+# reference rendered two different things. Observed once in a hundred-odd runs,
+# a lighthouse control of 161 against a usual 0.3-1.4, and it silently made
+# that track's verdict meaningless -- anything passes when the bar is that low.
+# Such a row is retried, then reported as inconclusive rather than as a pass.
+MAX_CONTROL_MEAN = 10.0
+
 
 def cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
@@ -91,6 +108,44 @@ def frame(script: Path, track: str, out: Path, env: dict[str, str]) -> np.ndarra
     return np.load(out).astype(np.int16)
 
 
+# What the game prints when it cannot resolve an asset. A complete pack prints
+# none of these, so any is a defect; there is no noise floor here.
+_MISSING = ("Cannot determine texture full path", "Failed to load")
+
+
+def missing_assets(binary: Path, cwd: Path, track: str,
+                   env: dict[str, str]) -> list[str]:
+    """Names the game says it could not find, racing `track` from `cwd`.
+
+    Run by hand rather than through the gym, because the engine sends the
+    child's stderr to /dev/null -- a pipe nobody drains deadlocks while a track
+    loads -- and this is precisely the output that matters here.
+    """
+    shutil.rmtree(cache_dir(), ignore_errors=True)
+    child = {k: v for k, v in {**os.environ, **env}.items() if v != ""}
+    done = subprocess.run(
+        [str(binary), "--gym", "--no-graphics", f"--track={track}"],
+        input=b'{"cmd":"hello"}\n', cwd=str(cwd), env=child, check=False,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+    )
+    log = done.stdout.decode(errors="replace")
+    names = set()
+    for line in log.splitlines():
+        for marker in _MISSING:
+            if marker in line:
+                names.add(line.split(marker, 1)[1].strip(" :.").split()[0])
+    return sorted(names)
+
+
+def reference_game() -> tuple[Path, Path]:
+    """The checkout's own binary and the directory to run it from."""
+    from stk_gym.binary import default_cwd, find_binary
+
+    binary = Path(find_binary())
+    cwd = default_cwd(binary)
+    return binary, Path(cwd) if cwd else binary.parent
+
+
 def diff(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     d = np.abs(a - b)
     px = 100.0 * (d.max(axis=2) > 0).sum() / (d.shape[0] * d.shape[1])
@@ -103,6 +158,10 @@ def main() -> int:
     ap.add_argument("--assets", required=True, type=Path,
                     help="the full stk-assets checkout, as the reference")
     ap.add_argument("--tracks", nargs="+", default=TRACKS)
+    ap.add_argument("--no-frames", action="store_true",
+                    help="skip the frame comparison, which needs a GL context. "
+                         "Leaves the completeness check, which does not, and is "
+                         "what CI runs.")
     args = ap.parse_args()
 
     # The reference: the checkout's own binary against the full asset tree.
@@ -121,8 +180,39 @@ def main() -> int:
         "SUPERTUXKART_ASSETS_DIR": "",
     }
 
+    # The completeness check first: it is sharper, needs no GL context, and a
+    # pack that fails it is not worth rendering.
+    print("Assets the game cannot find (a complete pack: none)\n")
+    print(f"{'track':<22}{'full':>8}{'pack':>8}   verdict")
+    incomplete = {}
+    ref_binary, ref_cwd = reference_game()
+    for track in args.tracks:
+        # The control is measured, not assumed: if the reference tree is itself
+        # incomplete, the pack should not be blamed for matching it.
+        ref = missing_assets(ref_binary, ref_cwd, track, full)
+        got = missing_assets((args.pack / "supertuxkart").resolve(),
+                             (args.pack / "stk").resolve(), track, pack)
+        if got:
+            incomplete[track] = got
+        print(f"{track:<22}{len(ref):>8}{len(got):>8}   "
+              f"{'OK' if not got else 'INCOMPLETE'}")
+    if incomplete:
+        print(file=sys.stderr)
+        for track, names in incomplete.items():
+            shown = ", ".join(names[:8]) + ("..." if len(names) > 8 else "")
+            print(f"  {track}: {len(names)} missing -- {shown}", file=sys.stderr)
+        print("\nregenerate the manifest with tools/gym/trace_assets.py",
+              file=sys.stderr)
+        return 1
+
+    if args.no_frames:
+        print("\nframes not compared (--no-frames)")
+        return 0
+
+    print("\nFrames against the full asset set\n")
     print(f"{'track':<22}{'control':>18}{'pack':>18}   verdict")
     bad = []
+    inconclusive = []
     with tempfile.TemporaryDirectory() as td:
         script = Path(td) / "frame.py"
         script.write_text(FRAME)
@@ -143,7 +233,16 @@ def main() -> int:
                 print(f"  {exc}", file=sys.stderr)
                 continue
             c_px, c_mean = diff(f1, f2)
+            if c_mean > MAX_CONTROL_MEAN:
+                # Once, before calling the measurement unusable.
+                f2 = frame(script, track, Path(td) / "f2.npy", full)
+                c_px, c_mean = diff(f1, f2)
             p_px, p_mean = diff(f1, p)
+            if c_mean > MAX_CONTROL_MEAN:
+                inconclusive.append(track)
+                print(f"{track:<22}{c_px:7.2f}% {c_mean:8.3f}"
+                      f"{p_px:7.2f}% {p_mean:8.3f}   INCONCLUSIVE")
+                continue
             # A pack cannot be better than the noise floor, so allow an
             # absolute slack as well for the tracks whose control is near zero.
             ok = p_mean <= max(c_mean * TOLERANCE, c_mean + 2.0)
@@ -157,6 +256,12 @@ def main() -> int:
               file=sys.stderr)
         print("the pack is missing assets those tracks load; re-run "
               "tools/gym/trace_assets.py", file=sys.stderr)
+        return 1
+    if inconclusive:
+        print(f"\n{len(inconclusive)} track(s) could not be judged: "
+              f"{', '.join(inconclusive)}", file=sys.stderr)
+        print("the reference disagreed with itself, so the pack was not "
+              "compared against anything; run it again", file=sys.stderr)
         return 1
     print("\npack renders within run-to-run noise of the full asset set")
     return 0

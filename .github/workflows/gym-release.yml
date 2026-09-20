@@ -117,15 +117,31 @@ jobs:
             | timeout 120 ../supertuxkart --gym --no-graphics --track=hacienda \
               2>&1 | tail -40
 
-      # The frame comparison that would catch a pack missing textures needs a GL
-      # context, which these runners do not have; it is a local step, documented
-      # in tools/gym/verify_pack.py. What CI can do is prove the pack is
-      # self-sufficient: every track starts and steps with nothing but the pack
-      # on disk, from a cold cache. That catches an outright absent file.
-      - name: Smoke-test every track against the pack alone
+      - name: Install the Python package
         run: |
           python -m pip install --upgrade pip
           python -m pip install "./python[dev]"
+
+      # Two checks, in increasing order of what they need.
+      #
+      # verify_pack --no-frames asks the game which assets it could not find and
+      # compares that against the full tree, which answers zero. It needs no GL
+      # context, so it runs here, and it is the sharper check: a pack missing
+      # 284 textures rendered closely enough to pass a frame comparison while
+      # naming every one of them on its log.
+      #
+      # The frame comparison itself needs a GL context these runners do not
+      # have, and stays a local step before tagging.
+      - name: Check the pack is as complete as the full assets
+        run: |
+          rm -rf ~/.cache/supertuxkart
+          python tools/gym/verify_pack.py \
+            --pack pack --assets stk-assets --no-frames
+
+      # And that the pack is self-sufficient: every track starts and steps with
+      # nothing but the pack on disk, from a cold cache.
+      - name: Smoke-test every track against the pack alone
+        run: |
           rm -rf ~/.cache/supertuxkart
           # Only the binary is pointed at, deliberately. The pack is laid out to
           # resolve its own data and assets, and that is what users get; setting
