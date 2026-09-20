@@ -51,7 +51,7 @@ import tempfile
 from pathlib import Path
 
 # This tool checks a pack that is already on disk; it must never fetch one.
-# find_binary's last resort is a 255 MB download, and a verification step that
+# find_binary's last resort is a few-hundred-MB download, and a step that
 # quietly installs the artefact it is verifying is worse than no check at all.
 os.environ.setdefault("STK_ENV_OFFLINE", "1")
 

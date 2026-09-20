@@ -14,14 +14,14 @@ import os
 
 import pytest
 
-# Never let a test run fetch the 160 MB release pack. Without a local binary
+# Never let a test run fetch the release pack. Without a local binary
 # these tests should skip in a second, not download the game; find_binary's last
 # resort is exactly the kind of thing that should not fire unasked in CI. An
 # explicit setting in the environment still wins, so a deliberate test of the
 # download path can have it.
 os.environ.setdefault("STK_ENV_OFFLINE", "1")
 
-from stk_gym import BinaryNotFound, StkEnv, find_binary  # noqa: E402
+from stk_gym import BinaryNotFound, StkEnv, find_binary
 
 # A short, cheap race: one kart, one lap, no opponents to simulate.
 FAST = dict(num_karts=1, laps=1, track="hacienda")

@@ -54,7 +54,7 @@ _PACKS: dict[tuple[str, str], str] = {
     ("linux", "amd64"): "SuperTuxKart-gym-linux-x86_64.tar.xz",
 }
 # Set to a non-empty value to never touch the network (an offline machine, or
-# a test that must fail loudly rather than fetch 160 MB).
+# a test that must fail loudly rather than fetch a few hundred MB).
 _OFFLINE_VAR = "STK_ENV_OFFLINE"
 # What a downloaded pack contains, relative to its root. See make_asset_pack.sh:
 # the nesting is what lets the game resolve its assets with no environment
@@ -182,7 +182,8 @@ def _pack_name() -> str | None:
 def _download(tag: str | None = None, cache: Path | None = None) -> str:
     """Fetch this version's engine and assets from its GitHub release, once.
 
-    The pack is 160 MB, so this is not something to do by accident: it happens
+    The pack is a few hundred megabytes, so this is not something to do by
+    accident: it happens
     only when every local source has been ruled out, it says what it is doing,
     and it never happens twice. The archive is checked against the release's
     SHA256SUMS before anything is unpacked, and the result lands in the user
@@ -214,9 +215,13 @@ def _download(tag: str | None = None, cache: Path | None = None) -> str:
         )
 
     base = f"{_RELEASES}/{tag}"
+    # No size in this message. It said "about 160 MB" for one release after the
+    # pack had grown to 254, because a number written in a string does not
+    # change when the thing it describes does. The transfer reports its own
+    # size from Content-Length, which cannot go stale.
     print(
-        f"supertuxkart-gym: fetching {pack} (about 160 MB) from the {tag} "
-        "release. This happens once.",
+        f"supertuxkart-gym: fetching {pack} from the {tag} release. "
+        "This happens once.",
         file=sys.stderr,
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -260,14 +265,18 @@ def _fetch(url: str) -> bytes:
 def _fetch_to(url: str, dest: Path) -> str:
     """Stream \\p url into \\p dest and return its SHA256.
 
-    Streamed rather than read into memory: the pack is 160 MB, and hashing it
-    on the way past means it is never held twice.
+    Streamed rather than read into memory: the pack is a few hundred
+    megabytes, and hashing it on the way past means it is never held twice.
     """
     digest = hashlib.sha256()
     with urllib.request.urlopen(url, timeout=60) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         tty = sys.stderr.isatty()
+        if total and not tty:
+            # A log, not a terminal: one line with the size, since the
+            # overwriting progress counter below would be meaningless there.
+            print(f"  {total >> 20} MiB to fetch", file=sys.stderr)
         with open(dest, "wb") as out:
             while chunk := resp.read(1 << 20):
                 out.write(chunk)

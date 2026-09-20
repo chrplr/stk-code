@@ -170,8 +170,8 @@ jobs:
 
       # xz, not zstd. The package unpacks this with the standard library, and
       # tarfile only learned zstd in Python 3.14 while this package supports
-      # 3.10. xz is also the smaller of the two here (160 MB against 168 MB)
-      # and decompresses faster, so nothing is given up.
+      # 3.10. xz is also the smaller of the two on this pack (254 MiB against
+      # 262 MiB) and decompresses faster, so nothing is given up.
       - name: Package
         if: startsWith(github.ref, 'refs/tags/')
         run: |

@@ -21,7 +21,7 @@ import gymnasium
 # The release tag this package downloads its engine and asset pack from:
 # the gym-release workflow refuses a tag that does not match it, so a wheel
 # and the engine it fetches cannot drift apart.
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .actions import ACTION_MODES
 from .baselines import run_expert, run_random, run_straight
