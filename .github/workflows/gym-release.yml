@@ -97,6 +97,22 @@ jobs:
         run: |
           sh tools/gym/make_asset_pack.sh stk-assets build/bin/supertuxkart pack
 
+      # Diagnostic, never a gate. When the game fails to start, the gym reports
+      # only "the environment server stopped responding": the reason is on the
+      # child's stderr, which the engine sends to /dev/null because a pipe
+      # nobody drains can deadlock a loading race. So the binary is run by hand
+      # here, where its output is allowed to be noisy, before the step that
+      # actually judges the pack.
+      - name: Show what the game says on startup
+        continue-on-error: true
+        run: |
+          echo "--- unresolved shared libraries, if any ---"
+          ldd -r pack/supertuxkart 2>&1 | grep -i "not found\|undefined" || echo "  none"
+          echo "--- one hello, by hand, from the pack ---"
+          cd pack/stk
+          printf '{"cmd":"hello"}\n' \
+            | timeout 120 ../supertuxkart --gym --no-graphics 2>&1 | tail -40
+
       # The frame comparison that would catch a pack missing textures needs a GL
       # context, which these runners do not have; it is a local step, documented
       # in tools/gym/verify_pack.py. What CI can do is prove the pack is
