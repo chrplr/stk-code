@@ -108,10 +108,14 @@ jobs:
         run: |
           echo "--- unresolved shared libraries, if any ---"
           ldd -r pack/supertuxkart 2>&1 | grep -i "not found\|undefined" || echo "  none"
-          echo "--- one hello, by hand, from the pack ---"
+          echo "--- one hello, by hand, with the arguments the gym uses ---"
+          # --track matters: without it the game starts on its own default,
+          # which the pack carries only the metadata for, and the resulting
+          # abort says nothing about the tracks the pack is actually for.
           cd pack/stk
           printf '{"cmd":"hello"}\n' \
-            | timeout 120 ../supertuxkart --gym --no-graphics 2>&1 | tail -40
+            | timeout 120 ../supertuxkart --gym --no-graphics --track=hacienda \
+              2>&1 | tail -40
 
       # The frame comparison that would catch a pack missing textures needs a GL
       # context, which these runners do not have; it is a local step, documented
