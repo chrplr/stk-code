@@ -2569,5 +2569,11 @@ unsigned int IrrDriver::getRealTime()
 // --------------------------------------------------------------------------------------------
 u32 IrrDriver::getDefaultFramebuffer() const
 {
+    // In gym mode with a hidden window the window's own framebuffer cannot be
+    // drawn into and read back (see GymServer::m_offscreen_fbo), so everything
+    // that draws "to the screen" draws into a framebuffer object instead.
+    const u32 gym_fbo = GymServer::offscreenFramebuffer();
+    if (gym_fbo != 0)
+        return gym_fbo;
     return m_video_driver->getDefaultFramebuffer();
 }

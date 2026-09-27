@@ -130,8 +130,12 @@ public:
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst.m_fbo);
         glBlitFramebuffer(0, 0, (int)src.m_width, (int)src.m_height, 0, 0,
                           (int)dst.m_width, (int)dst.m_height, mask, filter);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        // Back to whatever "the screen" is: 0 for a window, and a framebuffer
+        // object when the frame is rendered offscreen (--gym-hidden).
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,
+                          irr_driver->getDefaultFramebuffer());
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                          irr_driver->getDefaultFramebuffer());
     }
     // ------------------------------------------------------------------------
     void blitToDefault(size_t x0, size_t y0, size_t x1, size_t y1)
@@ -145,7 +149,8 @@ public:
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, irr_driver->getDefaultFramebuffer());
         glBlitFramebuffer(0, 0, (int)m_width, (int)m_height, (int)x0, (int)y0,
             (int)x1, (int)y1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,
+                          irr_driver->getDefaultFramebuffer());
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, irr_driver->getDefaultFramebuffer());
     }
 

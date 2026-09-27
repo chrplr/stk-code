@@ -163,12 +163,18 @@ frame = env.render()                     # (360, 640, 3) uint8, HUD included
 
 With `render_mode="rgb_array"` (or `obs_mode="pixels"`, which makes the frame
 the observation) every `reset` and `step` brings back the frame the game drew
-for that state, read from the back buffer before it is presented. The game
-renders into a window that is created hidden (`--gym-hidden`): it is never
-mapped, so the window manager never resizes it and the frame is exactly the
-requested `screensize`; vsync is off, so a step never waits for a monitor
-nobody sees; and the game's saved settings are left alone. Pass `hidden=False`
-to watch the window as well.
+for that state, read back before it is presented. The game renders into a window
+that is created hidden (`--gym-hidden`): it is never mapped, so the window
+manager never resizes it and the frame is exactly the requested `screensize`;
+vsync is off, so a step never waits for a monitor nobody sees; and the game's
+saved settings are left alone. Pass `hidden=False` to watch the window as well.
+
+Because that window is never mapped it has no readable framebuffer of its own —
+X11 leaves an unmapped window's contents undefined, and a driver may hand back
+the desktop pixels behind it instead of the game. So in hidden mode the game
+draws the whole frame, HUD included, into a framebuffer object of its own and
+reads that; nothing depends on what the window's buffer happens to hold. With
+`hidden=False` the window's back buffer is read, as before.
 
 The frame is the game's own rendering, so it needs a real OpenGL display
 (`--no-graphics` cannot draw, Vulkan cannot read back): the handshake reports
