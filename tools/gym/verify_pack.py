@@ -115,7 +115,13 @@ def frame(script: Path, track: str, out: Path, env: dict[str, str]) -> np.ndarra
 
 # What the game prints when it cannot resolve an asset. A complete pack prints
 # none of these, so any is a defect; there is no noise floor here.
-_MISSING = ("Cannot determine texture full path", "Failed to load")
+#
+# The last two are sound, and they were the gap this list had: a pack with every
+# sound effect and every music file pruned -- which is what gym-v0.1.0 through
+# gym-v0.1.2 shipped -- matched none of the texture markers and verified clean,
+# while a race logged "Could not load sound effect" 68 times.
+_MISSING = ("Cannot determine texture full path", "Failed to load",
+            "Could not load sound effect", "Loading Music:")
 
 
 def missing_assets(binary: Path, cwd: Path, track: str,
@@ -125,11 +131,17 @@ def missing_assets(binary: Path, cwd: Path, track: str,
     Run by hand rather than through the gym, because the engine sends the
     child's stderr to /dev/null -- a pipe nobody drains deadlocks while a track
     loads -- and this is precisely the output that matters here.
+
+    With ``--gym-hidden`` rather than ``--no-graphics``: headless, the game never
+    starts its sound at all, so a pack with no sound in it draws no complaint and
+    the sound markers above can never fire. Hidden mode loads what a real race
+    loads. It needs a GL context, which this script needs anyway for the frame
+    comparison below.
     """
     shutil.rmtree(cache_dir(), ignore_errors=True)
     child = {k: v for k, v in {**os.environ, **env}.items() if v != ""}
     done = subprocess.run(
-        [str(binary), "--gym", "--no-graphics", f"--track={track}"],
+        [str(binary), "--gym", "--gym-hidden", f"--track={track}"],
         input=b'{"cmd":"hello"}\n', cwd=str(cwd), env=child, check=False,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
     )
