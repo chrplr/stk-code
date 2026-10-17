@@ -18,8 +18,19 @@ env.close()
 
 ## Install
 
-The game must be built first; this package will not build it for you, because a
-SuperTuxKart build takes minutes.
+```sh
+pip install supertuxkart-gym
+```
+
+The wheel is pure Python. The first time an environment is made it fetches the
+game and a trimmed asset pack from this version's GitHub release, into
+`~/.cache/supertuxkart-gym`, and checks it against the release's `SHA256SUMS`.
+There are packs for Linux x86_64 and for macOS on Intel and Apple silicon; on
+any other machine it says it has none. `STK_ENV_OFFLINE=1` forbids the
+download.
+
+To work on the game itself, build it in the checkout instead; this package will
+not build it for you, because a SuperTuxKart build takes minutes.
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -28,8 +39,9 @@ pip install -e python
 
 The binary is looked for in this order: an explicit `binary=` argument,
 `$STK_ENV_BIN`, `build/bin/supertuxkart` in the checkout this package lives in,
-and finally the `PATH`. The checkout comes before the `PATH` on purpose: a
-system-wide SuperTuxKart is almost certainly a release without `--gym`.
+the `PATH`, and finally the release pack. The checkout comes before the `PATH`
+on purpose: a system-wide SuperTuxKart is almost certainly a release without
+`--gym`.
 
 ## Registered ids
 
