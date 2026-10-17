@@ -1102,8 +1102,13 @@ void updateModelMatrix()
         std::sort(sorted_dc.begin(), sorted_dc.end(),
             [](const DrawCallPair& a, const DrawCallPair& b)->bool
             {
-                return a.first->getDrawingPriority() <
-                    b.first->getDrawingPriority();
+                // Ties by name: the map iterates in address order, and the
+                // order two shaders draw in can change the frame.
+                if (a.first->getDrawingPriority() !=
+                    b.first->getDrawingPriority())
+                    return a.first->getDrawingPriority() <
+                        b.first->getDrawingPriority();
+                return a.first->getName() < b.first->getName();
             });
         for (unsigned dc = 0; dc < sorted_dc.size(); dc++)
         {
@@ -1142,7 +1147,12 @@ void updateModelMatrix()
                 g_final_draw_calls[i][dc].second.emplace_back
                     (texture_names,
                     std::vector<std::pair<SPMeshBuffer*, int> >());
-                for (SPMeshBuffer* spmb : q.second)
+                std::vector<SPMeshBuffer*> buffers(q.second.begin(),
+                    q.second.end());
+                std::sort(buffers.begin(), buffers.end(),
+                    [](const SPMeshBuffer* a, const SPMeshBuffer* b)->bool
+                    { return a->getSerial() < b->getSerial(); });
+                for (SPMeshBuffer* spmb : buffers)
                 {
                     g_final_draw_calls[i][dc].second[texture].second.push_back
                         (std::make_pair(spmb, material_id == -1 ?

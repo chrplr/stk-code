@@ -215,6 +215,18 @@ A run reproduces exactly: the same seeds and the same actions from process
 start give the same trajectory, bit for bit, in a different process on the same
 machine.
 
+So, nearly always, do the frames. A stepped race draws from game time alone:
+the animation clock the meshes, the wind and the shaders read is stopped and
+set from the race's tick count before each frame, and draw calls go out in an
+order that does not depend on heap addresses. Measured on macOS (Radeon Pro
+5500M) over 25 recorded runs of two 600-step episodes across the five tracks,
+each replayed in a second process: 3 of the 30,000 frames differed from the
+recording, each by a single pixel (a distant kart on `snowmountain`). Human
+mode keeps the wall clock, since it runs on its own clock anyway.
+
+Neither is promised across machines: the same source compiled for another
+platform, or rendered by another GPU, is not the same arithmetic.
+
 "Seeds", plural. `reset(seed=...)` seeds the AI's random draws, the item boxes
 and the powerup draws for the episode. The choice of the AI karts themselves
 is made once, before the first reset, from the game's launch seed:

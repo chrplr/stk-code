@@ -2031,6 +2031,18 @@ void initRest()
     // Now create the actual non-null device in the irrlicht driver
     irr_driver->initDevice();
 
+    // A stepped gym race draws its frames from game time alone (see
+    // GymServer::renderFrame): the animation timer must never run on the wall
+    // clock, not even while loading, as mesh animation accumulates its deltas.
+#ifndef SERVER_ONLY
+    if (GymServer::isEnabled() && !GymServer::isHuman())
+    {
+        irr::ITimer *timer = irr_driver->getDevice()->getTimer();
+        if (!timer->isStopped()) timer->stop();
+        timer->setTime(0);
+    }
+#endif
+
     // Init GUI
     IrrlichtDevice* device = irr_driver->getDevice();
     video::IVideoDriver* driver = device->getVideoDriver();

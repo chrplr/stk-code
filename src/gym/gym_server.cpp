@@ -501,6 +501,16 @@ void GymServer::renderFrame()
 {
     m_frame_ready    = false;
     ensureOffscreen();
+#ifndef SERVER_ONLY
+    // Mesh, wind and shader animation read irrlicht's virtual timer, which
+    // runs on the wall clock; pin it to the race's own time so a frame is a
+    // function of the state alone and a replay draws the same pixels.
+    irr::ITimer *timer = irr_driver->getDevice()->getTimer();
+    if (!timer->isStopped()) timer->stop();
+    if (World::getWorld())
+        timer->setTime((irr::u32)(1000.0f * stk_config->ticks2Time(
+            World::getWorld()->getTicksSinceStart())));
+#endif
     m_capture_wanted = true;
     updateGraphics();
     m_capture_wanted = false;
