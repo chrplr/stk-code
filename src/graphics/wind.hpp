@@ -28,11 +28,13 @@ public:
     Wind();
 
     vector3df getWind() const;
-    void update();
+    void update(float dt);
+    void reseed(int seed);
 
 private:
     vector3df m_wind;
     float m_seed;
+    float m_time;
 };
 
 #endif

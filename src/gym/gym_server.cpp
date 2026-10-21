@@ -38,6 +38,9 @@
 #include "utils/log.hpp"
 #include "utils/random_generator.hpp"
 
+#include <IrrlichtDevice.h>
+#include <IRandomizer.h>
+
 #include <cstdlib>
 #include <iostream>
 
@@ -834,6 +837,9 @@ std::string GymServer::handle(const std::string &line)
             const int s = seed.asInt(0);
             RandomGenerator::seed(s);
             srand((unsigned int)s);
+            irr_driver->reseedWind(s);
+            if (irr_driver->getDevice() && irr_driver->getDevice()->getRandomizer())
+                irr_driver->getDevice()->getRandomizer()->reset(s);
             // Item boxes and powerup draws are seeded from the clock when the
             // track loads; a reset that does not reseed them is not replayable
             // past the first item.

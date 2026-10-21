@@ -24,6 +24,7 @@
 #include "graphics/frame_buffer.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material_manager.hpp"
+#include "modes/world.hpp"
 #include "graphics/shader_based_renderer.hpp"
 #include "graphics/shared_gpu_objects.hpp"
 #include "graphics/shader_based_renderer.hpp"
@@ -739,8 +740,8 @@ void prepareDrawCalls()
         return;
     }
     g_bounding_boxes.clear();
-    sp_wind_dir = core::vector3df(1.0f, 0.0f, 0.0f) *
-        (irr_driver->getDevice()->getTimer()->getTime() / 1000.0f) * 1.5f;
+    const float sim_time = World::getWorld() ? World::getWorld()->getTime() : 0.0f;
+    sp_wind_dir = core::vector3df(1.0f, 0.0f, 0.0f) * sim_time * 1.5f;
     sp_solid_poly_count = sp_shadow_poly_count = 0;
     // 1st one is identity
     g_skinning_offset = 1;
@@ -1230,9 +1231,16 @@ void uploadAll()
         g_stk_sbr->getShadowMatrices()->getMatricesData());
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    for (SPMeshBuffer* spmb : g_instances)
     {
-        spmb->uploadInstanceData();
+        std::vector<SPMeshBuffer*> sorted_instances(g_instances.begin(),
+            g_instances.end());
+        std::sort(sorted_instances.begin(), sorted_instances.end(),
+            [](SPMeshBuffer* a, SPMeshBuffer* b)
+            { return a->getSerial() < b->getSerial(); });
+        for (SPMeshBuffer* spmb : sorted_instances)
+        {
+            spmb->uploadInstanceData();
+        }
     }
 
     g_dy_dc.erase(std::remove_if(g_dy_dc.begin(), g_dy_dc.end(),
@@ -1300,7 +1308,12 @@ void drawGlow()
     for (auto& p : g_glow_meshes)
     {
         glow_color_assigner->setValue(p.second.first);
-        for (SPMeshBuffer* spmb : p.second.second)
+        std::vector<SPMeshBuffer*> sorted_meshes(p.second.second.begin(),
+            p.second.second.end());
+        std::sort(sorted_meshes.begin(), sorted_meshes.end(),
+            [](SPMeshBuffer* a, SPMeshBuffer* b)
+            { return a->getSerial() < b->getSerial(); });
+        for (SPMeshBuffer* spmb : sorted_meshes)
         {
             spmb->draw(DCT_NORMAL, -1/*material_id*/);
         }

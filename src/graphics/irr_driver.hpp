@@ -330,6 +330,7 @@ public:
     void giveBoost(unsigned int cam_index) { m_renderer->giveBoost(cam_index);}
     // ------------------------------------------------------------------------
     inline core::vector3df getWind()  {return m_wind->getWind();}
+    inline void reseedWind(int seed) {m_wind->reseed(seed);}
 
     // -----------------------------------------------------------------------
     /** Returns a pointer to the spherical harmonics coefficients. */
