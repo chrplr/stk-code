@@ -188,9 +188,117 @@ jobs:
           name: gym-linux-x86_64
           path: SuperTuxKart-gym-linux-x86_64.tar.xz
 
+  # macOS, one native runner per architecture. The engine is built against
+  # upstream's prebuilt dependencies-macosx, the same libraries upstream's
+  # apple.yml builds with, and the pack carries them: unlike Linux there is no
+  # system copy to link against. The assets are the Linux job's, by the same
+  # manifest and script.
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The dependencies come from a release tag upstream moves ("preview"),
+      # so the archive is pinned by hash: a rebuild either gets the libraries
+      # this release was tested with or stops here.
+      DEPS_URL: https://github.com/supertuxkart/dependencies/releases/download/preview/dependencies-macosx.tar.xz
+      DEPS_SHA256: 4d1ee5e9f84d864d5ffee1ca6f6a4fff1025a5d833bd07a2295c429f1ff15248
+      # The oldest macOS the dependencies were built for. Left unset, the
+      # binary requires the runner's own macOS.
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Fetch the dependencies
+        run: |
+          curl -sSfL -o deps.tar.xz "$DEPS_URL"
+          echo "$DEPS_SHA256  deps.tar.xz" | shasum -a 256 -c
+          tar xf deps.tar.xz
+
+      - name: Build the game
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_FIND_ROOT_PATH="$PWD/dependencies-macosx" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+            -DUSE_CRYPTO_OPENSSL=FALSE -DCHECK_ASSETS=off
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Fetch stk-assets
+        run: |
+          brew install subversion
+          for d in karts library models sfx textures music tracks; do
+            svn export -q -r "$ASSETS_REV" "$ASSETS_SVN/$d" "stk-assets/$d"
+          done
+          du -sh stk-assets
+
+      # The executable comes out of the app bundle: inside one, FileManager
+      # looks for its data in Contents/Resources and ignores the pack layout.
+      # bundle_macos_libs.sh then gives it its libraries (see its header).
+      - name: Assemble the asset pack
+        run: |
+          BIN=build/bin/supertuxkart.app/Contents/MacOS/supertuxkart
+          sh tools/gym/make_asset_pack.sh stk-assets "$BIN" pack
+          sh tools/gym/bundle_macos_libs.sh dependencies-macosx/lib pack
+
+      - name: Install the Python package
+        run: |
+          python3 -m venv venv
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install "./python[dev]"
+
+      # The asset completeness check runs on the Linux pack, which carries the
+      # same files; what is new here is the binary, so the check is that every
+      # track starts and steps from the pack alone, with the dependencies the
+      # build used moved out of reach.
+      - name: Smoke-test every track against the pack alone
+        run: |
+          rm -rf ~/Library/Application\ Support/SuperTuxKart dependencies-macosx
+          export STK_ENV_BIN="$PWD/pack/supertuxkart"
+          for t in $(sed -n 's/^# tracks: //p' tools/gym/asset-manifest.txt); do
+            venv/bin/python - "$t" <<'EOF'
+          import sys
+          from stk_gym import StkEnv
+          track = sys.argv[1]
+          env = StkEnv(num_karts=4, laps=1, track=track)
+          env.reset(seed=0)
+          for _ in range(120):
+              obs, r, term, trunc, info = env.step(env.action_space.sample())
+              if term or trunc:
+                  break
+          env.close()
+          print(f"  {track}: ok")
+          EOF
+          done
+
+      # COPYFILE_DISABLE: without it macOS tar stores extended attributes as
+      # AppleDouble "._" files beside every member.
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          COPYFILE_DISABLE: "1"
+        run: |
+          NAME="SuperTuxKart-gym-macos-${{ matrix.arch }}"
+          mv pack "$NAME"
+          tar -cJf "$NAME.tar.xz" "$NAME"
+          ls -lh "$NAME.tar.xz"
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: gym-macos-${{ matrix.arch }}
+          path: SuperTuxKart-gym-macos-${{ matrix.arch }}.tar.xz
+
   create-release:
     runs-on: ubuntu-latest
-    needs: [build, check-version]
+    needs: [build, build-macos, check-version]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -220,7 +328,8 @@ jobs:
             package fetches this on first use; there is no need to download it
             by hand.
 
-            Linux x86_64, built on Ubuntu 22.04. SuperTuxKart is GPL-3.0-or-later
+            Linux x86_64, built on Ubuntu 22.04; macOS x86_64 and arm64, for
+            macOS 10.15 and later. SuperTuxKart is GPL-3.0-or-later
             and the corresponding source is this repository at this tag.
           files: |
             artifacts/SuperTuxKart-gym-*

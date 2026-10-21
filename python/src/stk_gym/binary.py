@@ -45,13 +45,16 @@ _BUILD_HINT = (
 # gym-release workflow builds for. The package version is the tag it fetches
 # from, so a wheel and its engine cannot drift apart.
 #
-# Linux x86_64 only for now. The game is C++ and every other target needs a
-# native runner rather than a cross-compile, so the table grows a row at a time
-# as the workflow grows a job; a machine with no row gets told so.
+# Linux x86_64 and macOS on both architectures. The game is C++ and every
+# target needs a native runner rather than a cross-compile, so the table grows
+# a row at a time as the workflow grows a job; a machine with no row gets told
+# so. Windows has none yet.
 _RELEASES = "https://github.com/chrplr/stk-code/releases/download"
 _PACKS: dict[tuple[str, str], str] = {
     ("linux", "x86_64"): "SuperTuxKart-gym-linux-x86_64.tar.xz",
     ("linux", "amd64"): "SuperTuxKart-gym-linux-x86_64.tar.xz",
+    ("darwin", "x86_64"): "SuperTuxKart-gym-macos-x86_64.tar.xz",
+    ("darwin", "arm64"): "SuperTuxKart-gym-macos-arm64.tar.xz",
 }
 # Set to a non-empty value to never touch the network (an offline machine, or
 # a test that must fail loudly rather than fetch a few hundred MB).

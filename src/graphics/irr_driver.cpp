@@ -2138,7 +2138,7 @@ void IrrDriver::updateDisplace(float dt)
     if (!Track::getCurrentTrack())
         return;
 
-    const float time = m_device->getTimer()->getTime() / 1000.0f;
+    const float time = World::getWorld() ? World::getWorld()->getTime() : 0.0f;
     const float speed = Track::getCurrentTrack()->getDisplacementSpeed();
 
     float strength = time;
@@ -2183,7 +2183,7 @@ void IrrDriver::update(float dt, bool is_loading)
     else if (show_dialog_warn)
         new ConfirmResolutionDialog(true);
 
-    m_wind->update();
+    m_wind->update(dt);
 
     PropertyAnimator::get()->update(dt);
 #ifndef SERVER_ONLY

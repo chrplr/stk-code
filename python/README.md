@@ -18,8 +18,19 @@ env.close()
 
 ## Install
 
-The game must be built first; this package will not build it for you, because a
-SuperTuxKart build takes minutes.
+```sh
+pip install supertuxkart-gym
+```
+
+The wheel is pure Python. The first time an environment is made it fetches the
+game and a trimmed asset pack from this version's GitHub release, into
+`~/.cache/supertuxkart-gym`, and checks it against the release's `SHA256SUMS`.
+There are packs for Linux x86_64 and for macOS on Intel and Apple silicon; on
+any other machine it says it has none. `STK_ENV_OFFLINE=1` forbids the
+download.
+
+To work on the game itself, build it in the checkout instead; this package will
+not build it for you, because a SuperTuxKart build takes minutes.
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -28,8 +39,9 @@ pip install -e python
 
 The binary is looked for in this order: an explicit `binary=` argument,
 `$STK_ENV_BIN`, `build/bin/supertuxkart` in the checkout this package lives in,
-and finally the `PATH`. The checkout comes before the `PATH` on purpose: a
-system-wide SuperTuxKart is almost certainly a release without `--gym`.
+the `PATH`, and finally the release pack. The checkout comes before the `PATH`
+on purpose: a system-wide SuperTuxKart is almost certainly a release without
+`--gym`.
 
 ## Registered ids
 
@@ -214,6 +226,18 @@ present the game to a participant, sample the trajectory at its own rate.
 A run reproduces exactly: the same seeds and the same actions from process
 start give the same trajectory, bit for bit, in a different process on the same
 machine.
+
+So, nearly always, do the frames. A stepped race draws from game time alone:
+the animation clock the meshes, the wind and the shaders read is stopped and
+set from the race's tick count before each frame, and draw calls go out in an
+order that does not depend on heap addresses. Measured on macOS (Radeon Pro
+5500M) over 25 recorded runs of two 600-step episodes across the five tracks,
+each replayed in a second process: 3 of the 30,000 frames differed from the
+recording, each by a single pixel (a distant kart on `snowmountain`). Human
+mode keeps the wall clock, since it runs on its own clock anyway.
+
+Neither is promised across machines: the same source compiled for another
+platform, or rendered by another GPU, is not the same arithmetic.
 
 "Seeds", plural. `reset(seed=...)` seeds the AI's random draws, the item boxes
 and the powerup draws for the episode. The choice of the AI karts themselves

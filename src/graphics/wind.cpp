@@ -23,7 +23,14 @@
 
 Wind::Wind()
 {
-    m_seed = (float)((rand() % 1000) - 500);
+    m_seed = 0.0f;
+    m_time = 0.0f;
+}
+
+void Wind::reseed(int seed)
+{
+    m_seed = (float)((seed % 1000) - 500);
+    m_time = 0.0f;
 }
 
 vector3df Wind::getWind() const
@@ -31,10 +38,11 @@ vector3df Wind::getWind() const
     return m_wind;
 }
 
-void Wind::update()
+void Wind::update(float dt)
 {
     vector3df dir(0, 0, 1);
-    const u32 now = irr_driver->getDevice()->getTimer()->getTime();
+    m_time += dt;
+    const float now = m_time * 1000.0f;
 
     const float rotation = asinf(noise2d(m_seed, now / 100000.0f)) * RAD_TO_DEGREE;
     dir.rotateXZBy(rotation);

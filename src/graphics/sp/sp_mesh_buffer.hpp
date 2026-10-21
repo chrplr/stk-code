@@ -83,6 +83,13 @@ private:
 
     bool m_skinned;
 
+    /** Creation order: SP::updateModelMatrix draws the buffers of one
+     *  texture group in this order rather than by address, so the frame
+     *  does not change with where the heap put them. */
+    uint64_t m_serial;
+
+    static uint64_t m_next_serial;
+
     // ------------------------------------------------------------------------
     bool initTexture();
 
@@ -108,9 +115,12 @@ public:
         m_uploaded_gl = false;
         m_uploaded_instance = false;
         m_skinned = false;
+        m_serial = m_next_serial++;
     }
     // ------------------------------------------------------------------------
     ~SPMeshBuffer();
+    // ------------------------------------------------------------------------
+    uint64_t getSerial() const                             { return m_serial; }
     // ------------------------------------------------------------------------
     virtual void draw(DrawCallType dct = DCT_NORMAL, int material_id = -1) const
     {

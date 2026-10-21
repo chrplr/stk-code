@@ -24,6 +24,7 @@
 #include "graphics/frame_buffer.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material_manager.hpp"
+#include "modes/world.hpp"
 #include "graphics/shader_based_renderer.hpp"
 #include "graphics/shared_gpu_objects.hpp"
 #include "graphics/shader_based_renderer.hpp"
@@ -739,8 +740,8 @@ void prepareDrawCalls()
         return;
     }
     g_bounding_boxes.clear();
-    sp_wind_dir = core::vector3df(1.0f, 0.0f, 0.0f) *
-        (irr_driver->getDevice()->getTimer()->getTime() / 1000.0f) * 1.5f;
+    const float sim_time = World::getWorld() ? World::getWorld()->getTime() : 0.0f;
+    sp_wind_dir = core::vector3df(1.0f, 0.0f, 0.0f) * sim_time * 1.5f;
     sp_solid_poly_count = sp_shadow_poly_count = 0;
     // 1st one is identity
     g_skinning_offset = 1;
@@ -1102,8 +1103,13 @@ void updateModelMatrix()
         std::sort(sorted_dc.begin(), sorted_dc.end(),
             [](const DrawCallPair& a, const DrawCallPair& b)->bool
             {
-                return a.first->getDrawingPriority() <
-                    b.first->getDrawingPriority();
+                // Ties by name: the map iterates in address order, and the
+                // order two shaders draw in can change the frame.
+                if (a.first->getDrawingPriority() !=
+                    b.first->getDrawingPriority())
+                    return a.first->getDrawingPriority() <
+                        b.first->getDrawingPriority();
+                return a.first->getName() < b.first->getName();
             });
         for (unsigned dc = 0; dc < sorted_dc.size(); dc++)
         {
@@ -1142,7 +1148,12 @@ void updateModelMatrix()
                 g_final_draw_calls[i][dc].second.emplace_back
                     (texture_names,
                     std::vector<std::pair<SPMeshBuffer*, int> >());
-                for (SPMeshBuffer* spmb : q.second)
+                std::vector<SPMeshBuffer*> buffers(q.second.begin(),
+                    q.second.end());
+                std::sort(buffers.begin(), buffers.end(),
+                    [](const SPMeshBuffer* a, const SPMeshBuffer* b)->bool
+                    { return a->getSerial() < b->getSerial(); });
+                for (SPMeshBuffer* spmb : buffers)
                 {
                     g_final_draw_calls[i][dc].second[texture].second.push_back
                         (std::make_pair(spmb, material_id == -1 ?
@@ -1220,9 +1231,16 @@ void uploadAll()
         g_stk_sbr->getShadowMatrices()->getMatricesData());
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    for (SPMeshBuffer* spmb : g_instances)
     {
-        spmb->uploadInstanceData();
+        std::vector<SPMeshBuffer*> sorted_instances(g_instances.begin(),
+            g_instances.end());
+        std::sort(sorted_instances.begin(), sorted_instances.end(),
+            [](SPMeshBuffer* a, SPMeshBuffer* b)
+            { return a->getSerial() < b->getSerial(); });
+        for (SPMeshBuffer* spmb : sorted_instances)
+        {
+            spmb->uploadInstanceData();
+        }
     }
 
     g_dy_dc.erase(std::remove_if(g_dy_dc.begin(), g_dy_dc.end(),
@@ -1290,7 +1308,12 @@ void drawGlow()
     for (auto& p : g_glow_meshes)
     {
         glow_color_assigner->setValue(p.second.first);
-        for (SPMeshBuffer* spmb : p.second.second)
+        std::vector<SPMeshBuffer*> sorted_meshes(p.second.second.begin(),
+            p.second.second.end());
+        std::sort(sorted_meshes.begin(), sorted_meshes.end(),
+            [](SPMeshBuffer* a, SPMeshBuffer* b)
+            { return a->getSerial() < b->getSerial(); });
+        for (SPMeshBuffer* spmb : sorted_meshes)
         {
             spmb->draw(DCT_NORMAL, -1/*material_id*/);
         }

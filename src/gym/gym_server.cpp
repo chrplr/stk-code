@@ -38,6 +38,9 @@
 #include "utils/log.hpp"
 #include "utils/random_generator.hpp"
 
+#include <IrrlichtDevice.h>
+#include <IRandomizer.h>
+
 #include <cstdlib>
 #include <iostream>
 
@@ -501,6 +504,16 @@ void GymServer::renderFrame()
 {
     m_frame_ready    = false;
     ensureOffscreen();
+#ifndef SERVER_ONLY
+    // Mesh, wind and shader animation read irrlicht's virtual timer, which
+    // runs on the wall clock; pin it to the race's own time so a frame is a
+    // function of the state alone and a replay draws the same pixels.
+    irr::ITimer *timer = irr_driver->getDevice()->getTimer();
+    if (!timer->isStopped()) timer->stop();
+    if (World::getWorld())
+        timer->setTime((irr::u32)(1000.0f * stk_config->ticks2Time(
+            World::getWorld()->getTicksSinceStart())));
+#endif
     m_capture_wanted = true;
     updateGraphics();
     m_capture_wanted = false;
@@ -824,6 +837,9 @@ std::string GymServer::handle(const std::string &line)
             const int s = seed.asInt(0);
             RandomGenerator::seed(s);
             srand((unsigned int)s);
+            irr_driver->reseedWind(s);
+            if (irr_driver->getDevice() && irr_driver->getDevice()->getRandomizer())
+                irr_driver->getDevice()->getRandomizer()->reset(s);
             // Item boxes and powerup draws are seeded from the clock when the
             // track loads; a reset that does not reseed them is not replayable
             // past the first item.

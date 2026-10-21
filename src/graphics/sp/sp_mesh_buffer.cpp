@@ -34,6 +34,8 @@
 
 namespace SP
 {
+uint64_t SPMeshBuffer::m_next_serial = 0;
+
 // ----------------------------------------------------------------------------
 SPMeshBuffer::~SPMeshBuffer()
 {
