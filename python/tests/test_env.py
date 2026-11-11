@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import gymnasium
 import numpy as np
@@ -155,7 +156,10 @@ def test_bad_construction_arguments_are_refused_by_name(binary):
 
 # -- Frames and keys: a window is needed ---------------------------------------
 
-_HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+# macOS sets neither variable: a logged-in session always has a window server.
+_HAS_DISPLAY = sys.platform == "darwin" or bool(
+    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+)
 needs_display = pytest.mark.skipif(not _HAS_DISPLAY, reason="frames need a display")
 
 
@@ -184,6 +188,21 @@ def test_rgb_array_frames_have_the_advertised_shape(frame_env):
         env.step(np.zeros(8, dtype=np.int8))
     assert env.render().shape == first.shape
     assert env.metadata["render_fps"] == 60
+
+
+@needs_display
+def test_a_step_that_draws_advances_the_clock_by_the_frame_skip(frame_env):
+    """Drawing must leave the race clock running. Stopped, it holds the tick
+    at 0 while the step runs physics until its guard gives out: 16 ticks a
+    step at frame_skip 2, a race eight times too fast."""
+    env = frame_env
+    env.reset(seed=0)
+    previous = env.sample()["tick"]
+    for _ in range(20):
+        env.step(np.array([0, 0, 1, 0, 0, 0, 0, 0], dtype=np.int8))
+        tick = env.sample()["tick"]
+        assert tick - previous == env.engine.meta["frames"]
+        previous = tick
 
 
 @needs_display

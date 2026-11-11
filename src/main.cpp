@@ -2034,11 +2034,13 @@ void initRest()
     // A stepped gym race draws its frames from game time alone (see
     // GymServer::renderFrame): the animation timer must never run on the wall
     // clock, not even while loading, as mesh animation accumulates its deltas.
+    // Speed 0, not stop(): a stopped timer is how the game pauses, and
+    // WorldStatus does not count the race clock while it is stopped.
 #ifndef SERVER_ONLY
     if (GymServer::isEnabled() && !GymServer::isHuman())
     {
         irr::ITimer *timer = irr_driver->getDevice()->getTimer();
-        if (!timer->isStopped()) timer->stop();
+        timer->setSpeed(0.0f);
         timer->setTime(0);
     }
 #endif
