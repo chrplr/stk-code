@@ -50,10 +50,10 @@ def space_for(mode: str) -> spaces.Space:
             dtype=np.float32,
         )
     if mode == "continuous_full":
-        # steer, accel, brake, nitro, skid
+        # steer, accel, brake, nitro, skid, fire, rescue
         return spaces.Box(
-            low=np.array([-1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            low=np.array([-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
     if mode == "keys":
@@ -90,8 +90,8 @@ def to_control(action: Any, mode: str) -> dict[str, Any]:
             "brake": bool(values[2] > 0.5),
         }
     if mode == "continuous_full":
-        if values.size != 5:
-            raise ValueError(f"continuous_full action must have 5 values, got {values.size}")
+        if values.size != 7:
+            raise ValueError(f"continuous_full action must have 7 values, got {values.size}")
         steer = float(np.clip(values[0], -1.0, 1.0))
         # Skidding needs a direction, and taking it from the steering is what
         # the game's own player controller does: a skid with no steering does
@@ -110,5 +110,9 @@ def to_control(action: Any, mode: str) -> dict[str, Any]:
             "brake": bool(values[2] > 0.5),
             "nitro": bool(values[3] > 0.5),
             "skid": skid,
+            # The server starts a rescue once and ignores a held one until its
+            # animation is over, as the game's own player controller does.
+            "fire": bool(values[5] > 0.5),
+            "rescue": bool(values[6] > 0.5),
         }
     raise ValueError(f"unknown action_mode {mode!r}; choose from {ACTION_MODES}")
