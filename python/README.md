@@ -81,7 +81,7 @@ the warning is expected.
 |---|---|---|
 | `discrete` | `Discrete(15)` | 5 steering positions × {accelerate, coast, brake} |
 | `continuous` (default) | `Box([-1,0,0], [1,1,1])` | steer, accelerate, brake |
-| `continuous_full` | `Box(·, (5,))` | the above plus nitro and skid, thresholded at 0.5 |
+| `continuous_full` | `Box(·, (7,))` | the above plus nitro, skid, fire and rescue, thresholded at 0.5 |
 | `keys` | `MultiBinary(8)` | the keys held: left, right, up, down, nitro, skid, fire, rescue |
 
 The server always accepts the whole control surface — steer, accel, brake,

@@ -181,9 +181,20 @@ def test_flatten_state_yields_every_field_every_time():
 
 
 def test_skidding_takes_its_direction_from_the_steering():
-    assert to_control([-1.0, 1.0, 0.0, 0.0, 1.0], "continuous_full")["skid"] == 2
-    assert to_control([1.0, 1.0, 0.0, 0.0, 1.0], "continuous_full")["skid"] == 3
-    assert to_control([0.0, 1.0, 0.0, 0.0, 0.0], "continuous_full")["skid"] == 0
+    assert to_control([-1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "continuous_full")["skid"] == 2
+    assert to_control([1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "continuous_full")["skid"] == 3
+    assert to_control([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "continuous_full")["skid"] == 0
+
+
+def test_continuous_full_fires_and_rescues():
+    space = action_space_for("continuous_full")
+    assert space.shape == (7,)
+    control = to_control([0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], "continuous_full")
+    assert (control["fire"], control["rescue"]) == (True, False)
+    control = to_control([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.7], "continuous_full")
+    assert (control["fire"], control["rescue"]) == (False, True)
+    with pytest.raises(ValueError, match="7 values"):
+        to_control([0.0, 1.0, 0.0, 0.0, 0.0], "continuous_full")
 
 
 def test_the_discrete_table_covers_steering_and_throttle():

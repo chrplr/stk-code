@@ -85,7 +85,7 @@ def _straight_action(env):
         return 0
     if mode == "continuous":
         return np.array([0.0, 1.0, 0.0], dtype=np.float32)
-    return np.array([0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    return np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 def run_straight(env, *, seed: int | None = None, max_steps: int | None = None):
